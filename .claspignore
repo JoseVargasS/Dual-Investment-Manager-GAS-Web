@@ -1,0 +1,13 @@
+**/*.md
+
+.gitignore
+.clasp.json
+
+**/.kilo/**
+**/node_modules/**
+**/.git/**
+**/skills/**
+
+agent-manager.json
+package-lock.json
+package.json
