@@ -229,9 +229,35 @@
     setupDelegation("historialContainer");
   });
 
+  const TIPO_POR_MONEDA = {
+    USDT: ["Buy ETH low", "Buy BTC low"],
+    ETH: ["Sell ETH high"],
+    BTC: ["Sell BTC high"],
+  };
+
   function manejarCambioMoneda() {
     clearFieldError("groupMoneda");
     actualizarStepMonto(DOM.moneda.value);
+    filtrarOpcionesTipo(DOM.moneda.value);
+  }
+
+  function filtrarOpcionesTipo(moneda) {
+    const opciones = DOM.tipoOperacion.querySelectorAll("option");
+    const permitidas = TIPO_POR_MONEDA[moneda] || null;
+
+    opciones.forEach(function (opt) {
+      if (!opt.value) return;
+      if (permitidas) {
+        opt.disabled = !permitidas.includes(opt.value);
+      } else {
+        opt.disabled = false;
+      }
+    });
+
+    const actual = DOM.tipoOperacion.value;
+    if (permitidas && !permitidas.includes(actual)) {
+      DOM.tipoOperacion.value = permitidas[0] || "";
+    }
   }
 
   // ============================================
@@ -396,6 +422,7 @@
     try {
       // Using cached DOM elements
       DOM.moneda.value = "USDT";
+      filtrarOpcionesTipo("USDT");
       DOM.tipoOperacion.value = "Buy ETH low";
 
       // Establecer el step adecuado según la moneda
@@ -476,6 +503,12 @@
 
     const tipoOperacion = DOM.tipoOperacion.value;
     if (!tipoOperacion) {
+      showFieldError("groupTipo", "errorTipo");
+      return { valid: false, field: "tipoOperacion" };
+    }
+
+    const tiposPermitidos = TIPO_POR_MONEDA[moneda];
+    if (tiposPermitidos && !tiposPermitidos.includes(tipoOperacion)) {
       showFieldError("groupTipo", "errorTipo");
       return { valid: false, field: "tipoOperacion" };
     }
@@ -1133,6 +1166,7 @@
     seleccionarCEX(op.cex || "");
     DOM.monto.value = op.monto || "";
     DOM.moneda.value = op.moneda || "";
+    filtrarOpcionesTipo(op.moneda || "");
 
     DOM.apr.value = op.apr || "";
     DOM.tipoOperacion.value = op.tipoOperacion || "";
