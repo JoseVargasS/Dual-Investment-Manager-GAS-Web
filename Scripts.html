@@ -855,6 +855,24 @@
   // ============================================
   // RENDERIZAR TABLAS - Optimizado
   // ============================================
+  function getOpcionesMonedaFinal(moneda, tipoOperacion) {
+    let permitidas;
+    if (moneda === "ETH") {
+      permitidas = ["USDT", "ETH"];
+    } else if (moneda === "BTC") {
+      permitidas = ["USDT", "BTC"];
+    } else if (moneda === "USDT" && tipoOperacion && tipoOperacion.includes("BTC")) {
+      permitidas = ["USDT", "BTC"];
+    } else {
+      permitidas = ["USDT", "ETH"];
+    }
+    let html = '<option value="">Final...</option>';
+    permitidas.forEach(function (m) {
+      html += '<option value="' + m + '">' + m + '</option>';
+    });
+    return html;
+  }
+
   function renderizarActivas(activas) {
     const container = $("activasContainer");
     if (!container) return;
@@ -931,10 +949,7 @@
         <td>${op.aprEfectivo || "-"}%</td>
         <td class="td-nowrap">
           <select class="select-moneda-final" onchange="completarOperacion(${op.fila}, this.value, this)" style="margin-bottom:6px; display:block;">
-            <option value="">Final...</option>
-            <option value="USDT">USDT</option>
-            <option value="ETH">ETH</option>
-            <option value="BTC">BTC</option>
+            ${getOpcionesMonedaFinal(moneda, op.tipoOperacion)}
           </select>
           <div style="display:flex; gap:8px;">
             <button class="btn-icon btn-edit" title="Editar">
