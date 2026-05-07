@@ -152,19 +152,19 @@ function getCapitalsList() {
     const ss = getSpreadsheet();
     if (!ss) return [DEFAULT_SHEET_NAME];
 
-    const sheets = ss
+    return ss
       .getSheets()
-      .filter((s) => !s.isSheetHidden());
-    sheets.forEach((sheet) => aplicarFormatoEstructuraCapital(sheet));
-    return sheets.map((s) => s.getName());
+      .filter((s) => !s.isSheetHidden())
+      .map((s) => s.getName());
   } catch (e) {
     Logger.log("Error en getCapitalsList: " + e);
     return [DEFAULT_SHEET_NAME];
   }
 }
 
-function aplicarFormatoEstructuraCapital(sheet) {
+function aplicarFormatoEstructuraCapital(sheet, incluirOperaciones) {
   if (!sheet) return;
+  const debeFormatearOperaciones = incluirOperaciones !== false;
 
   sheet.setColumnWidths(1, 4, 9);
   for (let row = 9; row <= 14; row++) {
@@ -186,7 +186,7 @@ function aplicarFormatoEstructuraCapital(sheet) {
     .setWrap(true);
 
   const lastRow = Math.max(sheet.getLastRow(), FIRST_DATA_ROW);
-  if (lastRow >= FIRST_DATA_ROW) {
+  if (debeFormatearOperaciones && lastRow >= FIRST_DATA_ROW) {
     aplicarFormatoRangoOperaciones(sheet, FIRST_DATA_ROW, lastRow - FIRST_DATA_ROW + 1);
   }
 }
@@ -221,6 +221,23 @@ function aplicarFormatoFilaOperacion(sheet, row, moneda, monedaFinal) {
       : "0.000000"
     : "$#,##0.00";
   sheet.getRange(row, COL.FINAL_OBT_VAL).setNumberFormat(finalFormat);
+}
+
+function crearValoresCalculadosOperacion(row, sheetName) {
+  const capInitCell = sheetName === DEFAULT_SHEET_NAME ? "J2" : "F3";
+  return [
+    `=INT(Q${row})`,
+    "dia",
+    `=ROUND((Q${row}-M${row})*24, 0)`,
+    "hrs",
+    `=F${row}-E${row}`,
+    `=IF(I${row}="USDT", H${row}*J${row}*Q${row}/365, H${row}*J${row}*Q${row}*L${row}/365)`,
+    `=IF(I${row}="USDT", H${row}+R${row}, H${row}*L${row}+R${row})`,
+    "",
+    "",
+    `=IFERROR((S${row}-${capInitCell})*365/${capInitCell}/CEILING(F${row}-MIN(E:E), 1), 0)`,
+    `=IF(I${row}="USDT", R${row}*365/H${row}, R${row}*365/H${row}/L${row})`,
+  ];
 }
 
 function encontrarPrimeraFilaVacia(sheet) {
@@ -298,28 +315,11 @@ function agregarOperacion(datos, sheetName) {
 
     // Insertar fórmulas y valores automáticos para columnas M a W (13 a 23)
     const r = nuevaFila;
-    const rowValues = [
-      `=INT(Q${r})`, // M: Días calc
-      "dia", // N: Texto "dia"
-      `=ROUND((Q${r}-M${r})*24, 0)`, // O: Horas calc
-      "hrs", // P: Texto "hrs"
-      `=F${r}-E${r}`, // Q: Tiempo días decimal
-      `=IF(I${r}="USDT", H${r}*J${r}*Q${r}/365, H${r}*J${r}*Q${r}*L${r}/365)`, // R: Interés
-      `=IF(I${r}="USDT", H${r}+R${r}, H${r}*L${r}+R${r})`, // S: Final Calc
-      "", // T: Final Obtenido Valor (Manual)
-      "", // U: Final Obtenido Moneda (Manual)
-    ];
-
-    // APR Acumulado (V) y APR Efectivo (W)
-    const capInitCell = sheetName === DEFAULT_SHEET_NAME ? "J2" : "F3";
-    rowValues.push(
-      `=IFERROR((S${r}-${capInitCell})*365/${capInitCell}/CEILING(F${r}-MIN(E:E), 1), 0)`,
-    ); // V: APR Acum
-    rowValues.push(`=IF(I${r}="USDT", R${r}*365/H${r}, R${r}*365/H${r}/L${r})`); // W: APR Ef
+    const rowValues = crearValoresCalculadosOperacion(r, sheetName);
 
     sheet.getRange(r, 13, 1, rowValues.length).setValues([rowValues]);
 
-    aplicarFormatoEstructuraCapital(sheet);
+    aplicarFormatoEstructuraCapital(sheet, false);
     aplicarFormatoFilaOperacion(sheet, r, datos.moneda);
     sheet.getRange(r, COL.MONEDA).setValue(datos.moneda);
 
@@ -463,26 +463,11 @@ function actualizarOperacionFila(datos, sheetName) {
 
     // Re-insertar fórmulas por si acaso se borraron
     const r = f;
-    const formulas = [
-      `=F${r}-E${r}`, // M: Tiempo CEX
-      `=F${r}-E${r}`, // N: Tiempo Días
-      `=INT(N${r}) & "d " & ROUND((N${r}-INT(N${r}))*24,0) & "h"`, // O: Duración
-      "", // P: (vacía)
-      `=IF(U${r}="", "", IF(U${r}="USDT", S${r}, S${r}/L${r}))`, // Q: Final Obtenido
-      `=IF(I${r}="USDT", H${r}*J${r}*N${r}/365, H${r}*J${r}*N${r}*L${r}/365)`, // R: Interés
-      `=IF(I${r}="USDT", H${r}+R${r}, H${r}*L${r}+R${r})`, // S: Total
-      "", // T: (vacía)
-      "", // U: Moneda Final (manual al confirmar)
-    ];
-    const capInitCell = sheetName === DEFAULT_SHEET_NAME ? "J2" : "F3";
-    formulas.push(
-      `=IFERROR((S${r}-${capInitCell})*365/${capInitCell}/(F${r}-MIN(E:E)), 0)`,
-    ); // V: APR Acum
-    formulas.push(`=IF(I${r}="USDT", R${r}*365/H${r}, R${r}*365/H${r}/L${r})`); // W: APR Ef
+    const formulas = crearValoresCalculadosOperacion(r, sheetName);
 
-    sheet.getRange(r, 13, 1, formulas.length).setFormulas([formulas]);
+    sheet.getRange(r, 13, 1, formulas.length).setValues([formulas]);
 
-    aplicarFormatoEstructuraCapital(sheet);
+    aplicarFormatoEstructuraCapital(sheet, false);
     aplicarFormatoFilaOperacion(sheet, r, datos.moneda);
 
     SpreadsheetApp.flush();
@@ -508,7 +493,7 @@ function completarOperacion(fila, monedaFinal, sheetName) {
     sheet.getRange(r, COL.FINAL_OBT_VAL).setFormula(valFormula);
     sheet.getRange(r, COL.FINAL_OBT_MON).setValue(monedaFinal);
 
-    aplicarFormatoEstructuraCapital(sheet);
+    aplicarFormatoEstructuraCapital(sheet, false);
     aplicarFormatoFilaOperacion(sheet, r, sheet.getRange(r, COL.MONEDA).getValue(), monedaFinal);
 
     SpreadsheetApp.flush();
@@ -613,17 +598,47 @@ function extractBetween(text, startStr, endStr) {
     .trim();
 }
 
+function parseTipoCambio(texto) {
+  if (!texto) return null;
+  const limpio = String(texto)
+    .replace(/[^0-9.,]/g, "")
+    .trim();
+  if (!limpio) return null;
+
+  const ultimoPunto = limpio.lastIndexOf(".");
+  const ultimaComa = limpio.lastIndexOf(",");
+  const separadorDecimal = ultimaComa > ultimoPunto ? "," : ".";
+  const normalizado = limpio
+    .replace(new RegExp("\\" + (separadorDecimal === "," ? "." : ","), "g"), "")
+    .replace(separadorDecimal, ".");
+  let valor = parseFloat(normalizado);
+  if (isNaN(valor)) return null;
+  if (!/[.,]/.test(limpio) && valor > 100 && valor < 10000) valor = valor / 1000;
+  return valor;
+}
+
+function escribirTipoCambio(sheet, cellRef, valor) {
+  sheet.getRange(cellRef).setValue(valor).setNumberFormat("0.000");
+}
+
 // Obtiene el tipo de cambio del dólar desde DollarHouse
 // Usa caché para evitar solicitudes frecuentes
 function GetDollarHouse(sheetName) {
   const cache = CacheService.getScriptCache();
   const cached = cache.get("dollar_rate");
-  if (cached) return parseFloat(cached);
 
   const { sheet } = getSheet(sheetName);
   if (!sheet) return null;
 
   const dollarCell = sheet.getName() === DEFAULT_SHEET_NAME ? "F2" : "F7";
+
+  if (cached) {
+    const cachedNum = parseTipoCambio(cached);
+    if (cachedNum) {
+      escribirTipoCambio(sheet, dollarCell, cachedNum);
+      return cachedNum;
+    }
+  }
 
   try {
     const resp = UrlFetchApp.fetch("https://app.dollarhouse.pe/", {
@@ -638,10 +653,10 @@ function GetDollarHouse(sheetName) {
 
     const html = resp.getContentText();
     const buy = extractBetween(html, 'id="buy-exchange-rate">', "<");
-    const buyNum = buy ? parseFloat(buy.replace(/[^0-9.]/g, "")) : null;
+    const buyNum = parseTipoCambio(buy);
 
     if (buyNum && !isNaN(buyNum)) {
-      sheet.getRange(dollarCell).setValue(buyNum);
+      escribirTipoCambio(sheet, dollarCell, buyNum);
       cache.put("dollar_rate", buyNum.toString(), 60);
       return buyNum;
     } else {
