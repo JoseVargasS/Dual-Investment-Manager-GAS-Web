@@ -7,8 +7,10 @@
   let currentSheet = "CAPITAL 1";
   const DEFAULT_SHEET_NAME = "CAPITAL 1";
   const ETH_PRICE_REFRESH_MS = 3000;
+  const P2P_REFRESH_MS = 60000;
   let ethPriceTimer = null;
   let ethPriceRequestInFlight = false;
+  let p2pRequestInFlight = false;
 
   const FORMATO_NUMERO = new Intl.NumberFormat("es-ES", {
     minimumFractionDigits: 2,
@@ -188,7 +190,7 @@
       ETH_PRICE_REFRESH_MS,
     );
 
-    setInterval(actualizarTablaP2P, 60000);
+    setInterval(actualizarTablaP2P, P2P_REFRESH_MS);
 
     // Delegación de eventos para tablas - Optimizada
     const setupDelegation = (id) => {
@@ -839,13 +841,18 @@
 
   function actualizarTablaP2P() {
     if (!isGASAvailable()) return;
+    if (p2pRequestInFlight) return;
+    p2pRequestInFlight = true;
+
     google.script.run
       .withSuccessHandler(function (resp) {
+        p2pRequestInFlight = false;
         if (resp && resp.success) {
           actualizarValorTC(resp.mejor);
         }
       })
       .withFailureHandler(function (e) {
+        p2pRequestInFlight = false;
         console.warn("Error tabla P2P:", e);
       })
       .actualizarP2PCompleto();

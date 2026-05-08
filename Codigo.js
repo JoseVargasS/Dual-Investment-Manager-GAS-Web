@@ -580,16 +580,13 @@ function obtenerResumen(sheetName) {
 }
 
 // ============================================
-// TIPO DE CAMBIO P2P (Bybit + OKX via Cloudflare Worker)
-// ============================================
-
-// ============================================
-// TIPO DE CAMBIO P2P (Bybit + OKX + Binance)
+// TIPO DE CAMBIO P2P (Bybit + OKX  + Binance via Cloudflare Worker)
 // ============================================
 
 const CF_PROXY = "https://p2p-proxy.jos-159lot.workers.dev/?url=";
 const P2P_CANTIDAD = 5;
 const P2P_CACHE_KEY = "p2p_rate";
+const P2P_CACHE_DETAIL_KEY = "p2p_rate_detail";
 const P2P_CACHE_TTL = 120;
 
 function p2pFetch(exchange, targetUrl, options) {
@@ -607,6 +604,7 @@ function p2pFetch(exchange, targetUrl, options) {
 }
 
 function filtrarPrecios(items, getprecio, cantidad) {
+  if (!items || !items.length) return [];
   const precios = [];
   for (let i = 0; i < items.length && precios.length < cantidad; i++) {
     const precio = parseFloat(getprecio(items[i]) || 0);
@@ -658,8 +656,54 @@ function promedio(arr) {
   return suma / arr.length;
 }
 
+function obtenerCacheP2P(cache) {
+  const cachedDetail = cache.get(P2P_CACHE_DETAIL_KEY);
+  if (!cachedDetail) return null;
+  try {
+    const parsed = JSON.parse(cachedDetail);
+    if (parsed && parsed.mejor > 3 && parsed.mejor < 5) return parsed;
+  } catch (e) {
+    Logger.log("Cache P2P invalida: " + e);
+  }
+  cache.remove(P2P_CACHE_DETAIL_KEY);
+  return null;
+}
+
+function guardarCacheP2P(cache, detalle) {
+  if (!detalle || !(detalle.mejor > 3 && detalle.mejor < 5)) return;
+  cache.put(P2P_CACHE_KEY, detalle.mejor.toString(), P2P_CACHE_TTL);
+  cache.put(P2P_CACHE_DETAIL_KEY, JSON.stringify(detalle), P2P_CACHE_TTL);
+}
+
+function obtenerDetalleP2P() {
+  const preciosBinance = obtenerPreciosBinance(P2P_CANTIDAD);
+  const preciosBybit = obtenerPreciosBybit(P2P_CANTIDAD);
+  const preciosOKX = obtenerPreciosOKX(P2P_CANTIDAD);
+
+  const promBinance = promedio(preciosBinance);
+  const promBybit = promedio(preciosBybit);
+  const promOKX = promedio(preciosOKX);
+  const promedios = [promBinance, promBybit, promOKX].filter(p => p > 0);
+  const mejor = promedios.length > 0 ? Math.max(...promedios) : 0;
+
+  return {
+    success: true,
+    binance: promBinance,
+    bybit: promBybit,
+    okx: promOKX,
+    mejor,
+    preciosBinance,
+    preciosBybit,
+    preciosOKX,
+    cached: false,
+  };
+}
+
 function obtenerTipoCambioP2P() {
   const cache = CacheService.getScriptCache();
+  const cachedDetail = obtenerCacheP2P(cache);
+  if (cachedDetail) return cachedDetail.mejor;
+
   const cached = cache.get(P2P_CACHE_KEY);
   if (cached) {
     const num = parseFloat(cached);
@@ -667,62 +711,57 @@ function obtenerTipoCambioP2P() {
     cache.remove(P2P_CACHE_KEY);
   }
 
-  const preciosBybit = obtenerPreciosBybit(P2P_CANTIDAD);
-  const preciosOKX = obtenerPreciosOKX(P2P_CANTIDAD);
-  const preciosBinance = obtenerPreciosBinance(P2P_CANTIDAD);
-
-  const promedios = [promedio(preciosBybit), promedio(preciosOKX), promedio(preciosBinance)].filter(p => p > 0);
-  const mejor = promedios.length > 0 ? Math.max(...promedios) : 0;
-
-  if (mejor > 3 && mejor < 5) cache.put(P2P_CACHE_KEY, mejor.toString(), P2P_CACHE_TTL);
-  return mejor;
+  const detalle = obtenerDetalleP2P();
+  guardarCacheP2P(cache, detalle);
+  return detalle.mejor;
 }
 
-function actualizarP2PCompleto() {
+function escribirTablaP2P(sheet, detalle) {
+  const rows = [["", "", "Binance", "Bybit", "OKX"]];
+  for (let i = 0; i < P2P_CANTIDAD; i++) {
+    rows.push([
+      "Precio " + (i + 1),
+      "",
+      detalle.preciosBinance[i] || "",
+      detalle.preciosBybit[i] || "",
+      detalle.preciosOKX[i] || "",
+    ]);
+  }
+  rows.push([
+    "Promedio",
+    "",
+    detalle.binance || "",
+    detalle.bybit || "",
+    detalle.okx || "",
+  ]);
+
+  sheet.getRange("O1:S7").setValues(rows);
+  sheet.getRange("Q1:S1").setFontWeight("bold").setFontSize(11);
+  sheet.getRange("Q7:S7").setFontWeight("bold");
+  sheet.getRange("Q2:S7").setNumberFormat("0.000");
+  sheet.getRange("Q1:S7").setHorizontalAlignment("center");
+  sheet.getRange("O2:O7").setHorizontalAlignment("left");
+}
+
+function actualizarP2PCompleto(force) {
   try {
+    const cache = CacheService.getScriptCache();
+    const cached = force ? null : obtenerCacheP2P(cache);
+    if (cached) {
+      cached.cached = true;
+      return cached;
+    }
+
     const ss = getSpreadsheet();
     const sheet = ss.getSheetByName(DEFAULT_SHEET_NAME);
     if (!sheet) return { success: false };
 
-    const preciosBinance = obtenerPreciosBinance(P2P_CANTIDAD);
-    const preciosBybit = obtenerPreciosBybit(P2P_CANTIDAD);
-    const preciosOKX = obtenerPreciosOKX(P2P_CANTIDAD);
-
-    const promBinance = promedio(preciosBinance);
-    const promBybit = promedio(preciosBybit);
-    const promOKX = promedio(preciosOKX);
-
-    // Escribir tabla P-S
-    sheet.getRange("P1:S7").clearContent();
-    sheet.getRange("P1").setValue("");
-    sheet.getRange("Q1").setValue("Binance");
-    sheet.getRange("R1").setValue("Bybit");
-    sheet.getRange("S1").setValue("OKX");
-
-    for (let i = 0; i < P2P_CANTIDAD; i++) {
-      const row = i + 2;
-      sheet.getRange("O" + row).setValue("Precio " + (i + 1));
-      if (preciosBinance[i]) sheet.getRange("Q" + row).setValue(preciosBinance[i]);
-      if (preciosBybit[i]) sheet.getRange("R" + row).setValue(preciosBybit[i]);
-      if (preciosOKX[i]) sheet.getRange("S" + row).setValue(preciosOKX[i]);
-    }
-
-    sheet.getRange("O7").setValue("Promedio");
-    if (promBinance > 0) sheet.getRange("Q7").setValue(promBinance);
-    if (promBybit > 0) sheet.getRange("R7").setValue(promBybit);
-    if (promOKX > 0) sheet.getRange("S7").setValue(promOKX);
-
-    sheet.getRange("Q1:S1").setFontWeight("bold").setFontSize(11);
-    sheet.getRange("Q7:S7").setFontWeight("bold");
-    sheet.getRange("Q2:S7").setNumberFormat("0.000");
-    sheet.getRange("Q1:S7").setHorizontalAlignment("center");
-    sheet.getRange("O2:O7").setHorizontalAlignment("left");
+    const detalle = obtenerDetalleP2P();
+    escribirTablaP2P(sheet, detalle);
     SpreadsheetApp.flush();
+    guardarCacheP2P(cache, detalle);
 
-    const promedios = [promBinance, promBybit, promOKX].filter(p => p > 0);
-    const mejor = promedios.length > 0 ? Math.max(...promedios) : 0;
-
-    return { success: true, binance: promBinance, bybit: promBybit, okx: promOKX, mejor: mejor };
+    return detalle;
   } catch (e) {
     Logger.log("Error actualizarP2PCompleto: " + e);
     return { success: false, message: e.toString() };
@@ -730,7 +769,7 @@ function actualizarP2PCompleto() {
 }
 
 function actualizarTipoCambioManual() {
-  const resp = actualizarP2PCompleto();
+  const resp = actualizarP2PCompleto(true);
   if (!resp.success || resp.mejor <= 0) return resp;
 
   const ss = getSpreadsheet();
@@ -745,6 +784,7 @@ function actualizarTipoCambioManual() {
 
 function limpiarCacheP2P() {
   CacheService.getScriptCache().remove(P2P_CACHE_KEY);
+  CacheService.getScriptCache().remove(P2P_CACHE_DETAIL_KEY);
 }
 
 // ============================================
