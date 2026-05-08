@@ -5,6 +5,7 @@
   let operacionesData = { activas: [], completadas: [] };
   let prevHistorialCount = 0;
   let currentSheet = "CAPITAL 1";
+  let capitalInicializado = false;
   const DEFAULT_SHEET_NAME = "CAPITAL 1";
   const ETH_PRICE_REFRESH_MS = 3000;
   const P2P_REFRESH_MS = 60000;
@@ -73,6 +74,26 @@
   const refreshIcons = () => {
     if (window.lucide?.createIcons) lucide.createIcons();
   };
+  const escapeCssValue = (value) =>
+    window.CSS?.escape
+      ? CSS.escape(String(value))
+      : String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+  function skeletonTabla(cantidad) {
+    const rows = Array.from({ length: cantidad || 3 }, () => '<div class="skeleton skeleton-row"></div>').join("");
+    return `<div class="skeleton-table" aria-hidden="true">${rows}</div>`;
+  }
+
+  function skeletonResumen() {
+    return `
+      <div class="skeleton-summary" aria-hidden="true">
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-row"></div>
+        <div class="skeleton skeleton-row"></div>
+        <div class="skeleton skeleton-row"></div>
+      </div>
+    `;
+  }
 
   document.addEventListener("DOMContentLoaded", function () {
     console.log("DOM cargado, inicializando...");
@@ -178,11 +199,12 @@
 
     // Pequeño retardo para que google.script.run esté disponible
     setTimeout(function () {
-      cargarCapitanes(); // Cargar lista de pestañas/capitales
-      cargarOperaciones();
-      cargarResumen();
-      cargarPrecioETH();
-      actualizarTablaP2P();
+      cargarCapitanes(function () {
+        cargarOperaciones();
+        cargarResumen();
+        cargarPrecioETH();
+        actualizarTablaP2P();
+      });
     }, 100);
 
     ethPriceTimer = setInterval(
@@ -206,6 +228,7 @@
           if (!row) return;
 
           const fila = parseInt(row.dataset.fila || "0");
+          const sheetName = row.dataset.sheet || currentSheet;
           const isHist = row.dataset.historial === "true";
 
           if (target.closest(".editable")) return;
@@ -214,8 +237,8 @@
           if (btn) {
             e.stopPropagation();
             if (btn.classList.contains("btn-edit"))
-              cargarEdicionOperacion(fila);
-            if (btn.classList.contains("btn-delete")) eliminarOperacionUI(fila);
+              cargarEdicionOperacion(fila, sheetName);
+            if (btn.classList.contains("btn-delete")) eliminarOperacionUI(fila, sheetName);
             return;
           }
 
@@ -224,7 +247,7 @@
             return;
           }
 
-          mostrarDetalle(fila, isHist);
+          mostrarDetalle(fila, isHist, sheetName);
         },
         { passive: true },
       );
@@ -266,7 +289,7 @@
   }
 
   // ============================================
-  // CONFIGURACIÓN
+  // CONFIGURACION
   // ============================================
   function setFechaHoraActual() {
     try {
@@ -458,7 +481,7 @@
   }
 
   // ============================================
-  // GUARDAR OPERACIÓN
+  // GUARDAR OPERACION
   // ============================================
   // Función para validar todos los campos del formulario
   function validarFormulario() {
@@ -624,6 +647,7 @@
             if (btnCancel) btnCancel.style.display = "none";
 
             window.editandoFila = null;
+            window.editandoSheet = null;
             DOM.formOperacion.reset();
             setFechaHoraActual();
             clearFormErrors();
@@ -655,7 +679,7 @@
         google.script.run
           .withSuccessHandler(successHandler)
           .withFailureHandler(failureHandler)
-          .actualizarOperacionFila(datos, currentSheet);
+          .actualizarOperacionFila(datos, window.editandoSheet || currentSheet);
       } else {
         google.script.run
           .withSuccessHandler(successHandler)
@@ -778,10 +802,8 @@
 
     if (!silent) {
       raf(() => {
-        DOM.activasContainer.innerHTML =
-          '<div class="loading-inline"><div class="spinner"></div><p>Obteniendo operaciones...</p></div>';
-        DOM.historialContainer.innerHTML =
-          '<div class="loading-inline"><div class="spinner"></div><p>Obteniendo historial...</p></div>';
+        DOM.activasContainer.innerHTML = skeletonTabla(4);
+        DOM.historialContainer.innerHTML = skeletonTabla(4);
       });
     }
 
@@ -790,11 +812,15 @@
       .withFailureHandler(function (error) {
         showAlert("error", "Error al cargar operaciones: " + error);
       })
-      .obtenerOperaciones(currentSheet);
+      .obtenerOperacionesDashboard(currentSheet);
   }
 
   function renderizarOperaciones(response) {
     if (response && response.success) {
+      if (response.selectedSheet && response.selectedSheet !== currentSheet) {
+        currentSheet = response.selectedSheet;
+        actualizarSelectorCapital(currentSheet);
+      }
       const oldCompletadasLen = operacionesData.completadas
         ? operacionesData.completadas.length
         : 0;
@@ -824,8 +850,7 @@
 
     if (!silent) {
       raf(() => {
-        DOM.resumenContainer.innerHTML =
-          '<div class="loading-inline"><div class="spinner"></div><p>Actualizando resumen...</p></div>';
+        DOM.resumenContainer.innerHTML = skeletonResumen();
       });
     }
 
@@ -837,6 +862,42 @@
         showAlert("error", "Error al cargar resumen: " + error);
       })
       .obtenerResumen(currentSheet);
+  }
+
+  function cargarHistorial(silent) {
+    if (!isGASAvailable()) {
+      if (DOM.historialContainer) {
+        DOM.historialContainer.innerHTML =
+          '<p class="error-text">No se pudo conectar con Google Apps Script</p>';
+      }
+      return;
+    }
+
+    if (!silent) {
+      raf(() => {
+        DOM.historialContainer.innerHTML = skeletonTabla(4);
+      });
+    }
+
+    google.script.run
+      .withSuccessHandler(function (response) {
+        if (response && response.success) {
+          const oldCompletadasLen = operacionesData.completadas
+            ? operacionesData.completadas.length
+            : 0;
+          operacionesData.completadas = response.completadas || [];
+          raf(() => renderizarHistorial(operacionesData.completadas, oldCompletadasLen));
+        } else {
+          showAlert(
+            "error",
+            response ? response.message : "Error al cargar historial",
+          );
+        }
+      })
+      .withFailureHandler(function (error) {
+        showAlert("error", "Error al cargar historial: " + error);
+      })
+      .obtenerOperaciones(currentSheet);
   }
 
   function actualizarTablaP2P() {
@@ -967,7 +1028,7 @@
       <table>
         <thead>
           <tr>
-            <th>Fecha Inicio</th><th>CEX</th><th>Monto</th><th>% APR</th>
+            <th>Capital</th><th>Fecha Inicio</th><th>CEX</th><th>Monto</th><th>% APR</th>
             <th>Operación</th><th>Interés</th>
             <th>Total calc.</th><th>APR Acum.</th><th>APR Ef.</th><th>Acciones</th>
           </tr>
@@ -977,6 +1038,8 @@
 
     activas.forEach((op) => {
       const fechaInicio = formatearFecha(op.fechaInicio);
+      const sheetName = op.sheetName || currentSheet;
+      const sheetSafe = sanitize(sheetName);
       const montoFormateado = formatearMonto(op.monto, op.moneda);
       const moneda = op.moneda ? String(op.moneda) : "USDT";
       const monedaKey = getMonedaKey(moneda);
@@ -992,7 +1055,10 @@
         : "";
 
       html += `
-      <tr class="operacion-row" data-fila="${op.fila}" data-historial="false">
+      <tr class="operacion-row" data-fila="${op.fila}" data-sheet="${sheetSafe}" data-historial="false">
+        <td class="td-nowrap">
+          <span class="badge-duration">${sheetSafe}</span>
+        </td>
         <td class="td-nowrap">
           <div style="margin-bottom:2px;">${fechaInicio}</div>
           ${duracionBadge}
@@ -1017,7 +1083,7 @@
         <td>${op.aprAcum || "-"}%</td>
         <td>${op.aprEfectivo || "-"}%</td>
         <td class="td-nowrap">
-          <select class="select-moneda-final" onchange="completarOperacion(${op.fila}, this.value, this)" style="margin-bottom:6px; display:block;">
+          <select class="select-moneda-final" onchange="completarOperacion(${op.fila}, this.value, this, this.closest('.operacion-row').dataset.sheet)" style="margin-bottom:6px; display:block;">
             ${getOpcionesMonedaFinal(moneda, op.tipoOperacion)}
           </select>
           <div style="display:flex; gap:8px;">
@@ -1037,7 +1103,7 @@
       </tbody>
       <tfoot>
         <tr class="table-footer-summary">
-          <td colspan="8" class="summary-label">Total en curso:</td>
+          <td colspan="9" class="summary-label">Total en curso:</td>
           <td colspan="2" class="summary-value">$${FORMATO_USD.format(totalSumaCalculada)}</td>
         </tr>
       </tfoot>
@@ -1084,6 +1150,8 @@
     ordenadas.forEach((op, idx) => {
       const animClass = idx < nuevasCount ? " anim-row-new" : "";
       const fechaInicio = formatearFecha(op.fechaInicio);
+      const sheetName = op.sheetName || currentSheet;
+      const sheetSafe = sanitize(sheetName);
       const montoFormateado = formatearMonto(op.monto, op.moneda);
       const moneda = op.moneda ? String(op.moneda) : "USDT";
       const monedaFinal = op.monedaFinal ? String(op.monedaFinal) : "-";
@@ -1102,7 +1170,7 @@
         : "";
 
       html += `
-      <tr class="operacion-row${animClass}" data-fila="${op.fila}" data-historial="true">
+      <tr class="operacion-row${animClass}" data-fila="${op.fila}" data-sheet="${sheetSafe}" data-historial="true">
         <td class="td-nowrap">
           <div style="margin-bottom:2px;">${fechaInicio}</div>
           ${duracionBadge}
@@ -1136,8 +1204,9 @@
     refreshIcons();
   }
 
-  function completarOperacion(fila, monedaFinal, selectElement) {
+  function completarOperacion(fila, monedaFinal, selectElement, sheetName) {
     if (!monedaFinal) return;
+    const targetSheet = sheetName || currentSheet;
 
     mostrarConfirmacion(
       `¿Confirmar que la operación finalizó en ${monedaFinal}?`,
@@ -1149,7 +1218,7 @@
         }
 
         const opRow = document.querySelector(
-          `.operacion-row[data-fila='${fila}']`,
+          `.operacion-row[data-fila='${fila}'][data-sheet='${escapeCssValue(targetSheet)}']`,
         );
         if (opRow) {
           opRow.classList.add("anim-row-completing");
@@ -1181,7 +1250,7 @@
             );
             selectElement.value = "";
           })
-          .completarOperacion(fila, monedaFinal, currentSheet);
+          .completarOperacion(fila, monedaFinal, targetSheet);
       },
       function () {
         selectElement.value = "";
@@ -1189,7 +1258,8 @@
     );
   }
 
-  function eliminarOperacionUI(fila) {
+  function eliminarOperacionUI(fila, sheetName) {
+    const targetSheet = sheetName || currentSheet;
     mostrarConfirmacion(
       "¿Estás seguro de que deseas eliminar esta operación de forma permanente?",
       function () {
@@ -1199,7 +1269,7 @@
         }
 
         const opRow = document.querySelector(
-          `.operacion-row[data-fila='${fila}']`,
+          `.operacion-row[data-fila='${fila}'][data-sheet='${escapeCssValue(targetSheet)}']`,
         );
         if (opRow) {
           shatterElement(opRow);
@@ -1223,19 +1293,20 @@
             showAlert("error", extraerMensaje(error, "Error de conexión"));
             refrescarTodo(true);
           })
-          .eliminarOperacionFila(fila, currentSheet);
+          .eliminarOperacionFila(fila, targetSheet);
       },
     );
   }
 
-  function cargarEdicionOperacion(fila) {
+  function cargarEdicionOperacion(fila, sheetName) {
+    const targetSheet = sheetName || currentSheet;
     const op =
-      (operacionesData.activas || []).find((o) => o.fila === fila) ||
-      (operacionesData.completadas || []).find((o) => o.fila === fila);
+      (operacionesData.activas || []).find((o) => o.fila === fila && (o.sheetName || currentSheet) === targetSheet) ||
+      (operacionesData.completadas || []).find((o) => o.fila === fila && (o.sheetName || currentSheet) === targetSheet);
     if (!op) return;
 
     const editRow = document.querySelector(
-      `.operacion-row[data-fila='${fila}']:not([data-historial="true"])`,
+      `.operacion-row[data-fila='${fila}'][data-sheet='${escapeCssValue(targetSheet)}']:not([data-historial="true"])`,
     );
     if (editRow) {
       editRow.classList.add("anim-row-edit");
@@ -1257,6 +1328,7 @@
     DOM.precioObjetivo.value = op.precioObjetivo || "";
 
     window.editandoFila = fila;
+    window.editandoSheet = targetSheet;
 
     const submitBtn = DOM.btnGuardar;
     if (submitBtn) {
@@ -1264,11 +1336,6 @@
       if (btnText) btnText.textContent = "Actualizar Operación";
       submitBtn.classList.add("btn-warning");
     }
-    showAlert(
-      "info",
-      "Modo edición activado. Modifica los campos y pulsa 'Actualizar'.",
-    );
-
     const btnCancel = DOM.btnCancelar;
     if (btnCancel) btnCancel.style.display = "inline-block";
 
@@ -1277,6 +1344,7 @@
 
   function cancelarEdicion() {
     window.editandoFila = null;
+    window.editandoSheet = null;
     DOM.formOperacion.reset();
     seleccionarCEX("OKX"); // Reset custom select
     setFechaHoraActual();
@@ -1304,13 +1372,14 @@
   // ============================================
   // MODAL
   // ============================================
-  function mostrarDetalle(fila, esHistorial) {
+  function mostrarDetalle(fila, esHistorial, sheetName) {
+    const targetSheet = sheetName || currentSheet;
     const operaciones = esHistorial
       ? operacionesData.completadas
       : operacionesData.activas;
     if (!operaciones) return;
 
-    const op = operaciones.find((o) => o.fila === fila);
+    const op = operaciones.find((o) => o.fila === fila && (o.sheetName || currentSheet) === targetSheet);
     if (!op) return;
 
     const badgeClass = getBadgeClass(op.tipoOperacion);
@@ -1322,6 +1391,10 @@
     const monedaKey = getMonedaKey(moneda);
 
     let html = `
+    <div class="detail-item">
+      <div class="detail-label">Capital</div>
+      <div class="detail-value highlight">${sanitize(op.sheetName || targetSheet)}</div>
+    </div>
     <div class="detail-item">
       <div class="detail-label">Fecha de Inicio</div>
       <div class="detail-value">${fechaInicio}</div>
@@ -1531,7 +1604,7 @@
           </div>`;
       }
     } else {
-      // DISEÑO PARA NUEVAS PESTAÑAS (Resumen simplificado 7 filas)
+      // DISENO PARA NUEVAS PESTANAS (Resumen simplificado 7 filas)
       const rows = data.cuadro3 || [];
       html += `
         <div class="resumen-card">
@@ -1607,9 +1680,9 @@
   }
 
   // ============================================
-  // GESTIÓN DE CAPITALES (PESTAÑAS)
+  // GESTION DE CAPITALES (PESTANAS)
   // ============================================
-  function cargarCapitanes() {
+  function cargarCapitanes(onReady) {
     if (!isGASAvailable()) {
       showAlert("error", "No se pudo conectar con Google Apps Script");
       return;
@@ -1620,12 +1693,20 @@
         const trigger = $("capitalSelectedText");
         const options = $("capitalOptions");
         const select = $("capitalSelect");
+        const vistaSelect = $("vistaCapitalSelect");
 
         if (!trigger || !options || !select) return;
+        if (list && list.length && !capitalInicializado) {
+          currentSheet = list[0];
+          capitalInicializado = true;
+        } else if (list && list.length && !list.includes(currentSheet)) {
+          currentSheet = list[0];
+        }
 
         trigger.textContent = currentSheet;
         options.innerHTML = "";
         select.innerHTML = "";
+        if (vistaSelect) vistaSelect.innerHTML = "";
 
         list.forEach((name) => {
           // Opción para custom select
@@ -1642,6 +1723,14 @@
           nativeOpt.textContent = name;
           nativeOpt.selected = name === currentSheet;
           select.appendChild(nativeOpt);
+
+          if (vistaSelect) {
+            const vistaOpt = document.createElement("option");
+            vistaOpt.value = name;
+            vistaOpt.textContent = name;
+            vistaOpt.selected = name === currentSheet;
+            vistaSelect.appendChild(vistaOpt);
+          }
         });
 
         // Eventos para el selector custom
@@ -1661,8 +1750,21 @@
             triggerContainer.classList.toggle("active");
           }
         };
+        if (typeof onReady === "function") onReady(list);
       })
       .getCapitalsList();
+  }
+
+  function actualizarSelectorCapital(name) {
+    const trigger = $("capitalSelectedText");
+    const nativeSelect = $("capitalSelect");
+    const vistaSelect = $("vistaCapitalSelect");
+    if (trigger) trigger.textContent = name;
+    if (nativeSelect) nativeSelect.value = name;
+    if (vistaSelect) vistaSelect.value = name;
+    $$("#capitalOptions .custom-option").forEach((opt) => {
+      opt.classList.toggle("selected", opt.textContent === name);
+    });
   }
 
   function cambiarCapital(name) {
@@ -1671,10 +1773,7 @@
     currentSheet = name;
 
     // Visual update
-    $("capitalSelectedText").textContent = name;
-    $$("#capitalOptions .custom-option").forEach((opt) => {
-      opt.classList.toggle("selected", opt.textContent === name);
-    });
+    actualizarSelectorCapital(name);
 
     // Cerrar dropdown
     const options = $("capitalOptions");
@@ -1684,6 +1783,15 @@
 
     // Refresh data
     refrescarTodo();
+  }
+
+  function cambiarVistaCapital(name) {
+    if (!name || name === currentSheet) return;
+    console.log("Cambiando vista a capital:", name);
+    currentSheet = name;
+    actualizarSelectorCapital(name);
+    cargarHistorial(false);
+    cargarResumen(false);
   }
 
   function mostrarModalCapital() {
@@ -2164,7 +2272,7 @@
 
     const toast = document.createElement("div");
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<span class="toast-icon"><i data-lucide="${iconName}"></i></span><span class="toast-content">${message}</span>`;
+    toast.innerHTML = `<span class="toast-icon"><i data-lucide="${iconName}"></i></span><span class="toast-content">${sanitize(message)}</span>`;
     container.appendChild(toast);
     refreshIcons();
 
@@ -2174,7 +2282,7 @@
       toast.classList.remove("show");
       toast.classList.add("hiding");
       setTimeout(() => toast.remove(), 300);
-    }, 4000);
+    }, type === "error" ? 3500 : 2400);
   }
 
   // Mostrar error inline en un campo específico

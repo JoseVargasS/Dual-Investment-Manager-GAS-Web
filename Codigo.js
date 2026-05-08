@@ -98,6 +98,112 @@ function fmtPct(raw) {
   return isNaN(n) ? "0.00" : (n * 100).toFixed(2);
 }
 
+function leerOperacionesDesdeSheet(sheet, tz) {
+  const sheetName = sheet.getName();
+  const lastRow = sheet.getLastRow();
+  if (lastRow < FIRST_DATA_ROW) return { activas: [], completadas: [] };
+
+  const numRows = lastRow - FIRST_DATA_ROW + 1;
+  const values = sheet
+    .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, NUM_COLS)
+    .getValues();
+
+  const activas = [];
+  const completadas = [];
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const fechaVal = row[0];
+    if (!fechaVal || fechaVal.toString().trim() === "") continue;
+
+    const daysInt = Math.round(parseFloat(row[8])) || 0;
+    const hrsInt = Math.round(parseFloat(row[10])) || 0;
+    let tStr = "";
+    if (daysInt > 0) tStr += daysInt + (daysInt === 1 ? " dia " : " dias ");
+    if (hrsInt > 0 || (daysInt === 0 && hrsInt === 0))
+      tStr += hrsInt + (hrsInt === 1 ? " hora" : " horas");
+
+    const operacion = {
+      fila: FIRST_DATA_ROW + i,
+      sheetName,
+      capital: sheetName,
+      fechaInicio: serCell(row[0], sheetName, tz),
+      fechaFin: serCell(row[1], sheetName, tz),
+      cex: serCell(row[2], sheetName, tz),
+      monto: serCell(row[3], sheetName, tz),
+      moneda: serCell(row[4], sheetName, tz),
+      apr: fmtPct(row[5]),
+      tipoOperacion: serCell(row[6], sheetName, tz),
+      precioObjetivo: serCell(row[7], sheetName, tz),
+      tiempoCex: tStr,
+      tiempoDias: serCell(row[12], sheetName, tz),
+      interes: serCell(row[13], sheetName, tz),
+      total: serCell(row[14], sheetName, tz),
+      final: serCell(row[15], sheetName, tz),
+      monedaFinal: serCell(row[16], sheetName, tz),
+      aprAcum: fmtPct(row[17]),
+      aprEfectivo: fmtPct(row[18]),
+    };
+
+    const mf = row[16];
+    if (mf !== null && mf !== undefined && mf.toString().trim() !== "") {
+      completadas.push(operacion);
+    } else {
+      activas.push(operacion);
+    }
+  }
+
+  return { activas, completadas };
+}
+
+function obtenerOperacionesDashboard(sheetName) {
+  try {
+    const ss = getSpreadsheet();
+    const tz = ss.getSpreadsheetTimeZone();
+    const sheets = ss.getSheets().filter((s) => !s.isSheetHidden());
+    const selectedSheet = sheetName || (sheets[0] ? sheets[0].getName() : DEFAULT_SHEET_NAME);
+    const activas = [];
+    let completadas = [];
+
+    sheets.forEach((sheet) => {
+      const data = leerOperacionesDesdeSheet(sheet, tz);
+      activas.push.apply(activas, data.activas);
+      if (sheet.getName() === selectedSheet) completadas = data.completadas;
+    });
+
+    return {
+      success: true,
+      activas,
+      completadas,
+      selectedSheet,
+    };
+  } catch (error) {
+    Logger.log("Error en obtenerOperacionesDashboard: " + error);
+    return { success: false, message: error.toString() };
+  }
+}
+
+function calcularAprPromedioOperaciones(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < FIRST_DATA_ROW) return "0.00%";
+
+  const numRows = lastRow - FIRST_DATA_ROW + 1;
+  const values = sheet
+    .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, COL.APR - COL.FECHA_INICIO + 1)
+    .getValues();
+  const aprs = [];
+
+  values.forEach((row) => {
+    const fecha = row[0];
+    const apr = parseFloat(row[COL.APR - COL.FECHA_INICIO]);
+    if (fecha && isFinite(apr) && apr >= 0 && apr <= 10) aprs.push(apr);
+  });
+
+  if (!aprs.length) return "0.00%";
+  const avg = aprs.reduce((sum, apr) => sum + apr, 0) / aprs.length;
+  return (avg * 100).toFixed(2) + "%";
+}
+
 // ============================================
 // FUNCIONES DE PLANTILLA
 // ============================================
@@ -342,6 +448,7 @@ function obtenerOperaciones(sheetName) {
   try {
     const { sheet, ss } = getSheet(sheetName);
     const tz = ss.getSpreadsheetTimeZone();
+    const actualSheetName = sheet.getName();
     const lastRow = sheet.getLastRow();
 
     Logger.log(
@@ -380,6 +487,8 @@ function obtenerOperaciones(sheetName) {
       // Crear objeto operación con los datos de la fila
       const operacion = {
         fila: FIRST_DATA_ROW + i,
+        sheetName: actualSheetName,
+        capital: actualSheetName,
         fechaInicio: serCell(row[0], sheetName, tz),
         fechaFin: serCell(row[1], sheetName, tz),
         cex: serCell(row[2], sheetName, tz),
@@ -537,6 +646,8 @@ function obtenerResumen(sheetName) {
       } else {
         // Para nuevas pestañas, el resumen está en E2:F8
         cuadro3 = sheet.getRange("E2:F8").getDisplayValues();
+        const aprPromedio = calcularAprPromedioOperaciones(sheet);
+        if (aprPromedio && cuadro3[4]) cuadro3[4][1] = aprPromedio;
       }
     } catch (e) {
       Logger.log("Error obteniendo cuadro3: " + e);
@@ -848,7 +959,7 @@ function crearNuevoCapital(datos) {
         "=ROUND(IFERROR(INDEX(S:S,MATCH(9.99999999999999E+307,S:S))-F3,0), 2)",
       ],
       ["Promedio Diario", "=IFERROR(F4 / CEILING(MAX(E:E)-MIN(E:E), 1), 0)"],
-      ["%APR Promedio", "=AVERAGE(W16:W1000)"],
+      ["%APR Promedio", "=AVERAGE(J16:J1000)"],
       ["Tipo Cambio Venta", ""],
       ["Capital Final (S/)", "=(F3+F4)*F7"],
     ];

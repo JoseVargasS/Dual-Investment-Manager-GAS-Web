@@ -32,17 +32,15 @@
             <span class="eth-price-status" id="ethPriceStatus">Binance</span>
           </div>
           <div class="capital-selector-container">
-            <div class="custom-select-container" id="capitalSelectorContainer">
-              <div class="custom-select-trigger" id="capitalTrigger" role="button" tabindex="0">
-                <span id="capitalSelectedText">Cargando...</span>
-              </div>
-              <div class="custom-options" id="capitalOptions"></div>
-              <select id="capitalSelect" style="display: none" onchange="cambiarCapital(this.value)">
-                <option value="">Cargando...</option>
-              </select>
+            <div style="display: none">
+              <span id="capitalSelectedText"></span>
+              <div id="capitalOptions"></div>
+              <select id="capitalSelect"></select>
+              <div id="capitalTrigger"></div>
             </div>
             <button class="btn-add-capital" onclick="mostrarModalCapital()" title="Añadir Capital">
               <i data-lucide="plus"></i>
+              <span>Añadir Capital</span>
             </button>
           </div>
           <div
@@ -76,9 +74,10 @@
             <span id="countActivas" class="count-badge">—</span>
           </h2>
           <div id="activasContainer">
-            <div class="loading show">
-              <div class="spinner"></div>
-              <p>Cargando operaciones...</p>
+            <div class="skeleton-table" aria-hidden="true">
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
             </div>
           </div>
         </div>
@@ -90,12 +89,21 @@
           <h2 class="section-title">
             <i data-lucide="archive" class="icon green"></i>
             Historial de Operaciones
+            <select
+              id="vistaCapitalSelect"
+              class="vista-capital-select"
+              onchange="cambiarVistaCapital(this.value)"
+              title="Seleccionar historial y resumen"
+            >
+              <option value="">Cargando...</option>
+            </select>
             <span id="countHistorial" class="count-badge">—</span>
           </h2>
           <div id="historialContainer">
-            <div class="loading show">
-              <div class="spinner"></div>
-              <p>Cargando historial...</p>
+            <div class="skeleton-table" aria-hidden="true">
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
             </div>
           </div>
         </div>
@@ -109,9 +117,11 @@
             Resumen Financiero
           </h2>
           <div id="resumenContainer" class="resumen-grid">
-            <div class="loading show" style="grid-column: 1 / -1">
-              <div class="spinner"></div>
-              <p>Cargando resumen...</p>
+            <div class="skeleton-summary" aria-hidden="true">
+              <div class="skeleton skeleton-text"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
             </div>
           </div>
         </div>
