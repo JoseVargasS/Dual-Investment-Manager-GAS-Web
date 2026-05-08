@@ -583,126 +583,72 @@ function obtenerResumen(sheetName) {
 // TIPO DE CAMBIO P2P (Bybit + OKX via Cloudflare Worker)
 // ============================================
 
+// ============================================
+// TIPO DE CAMBIO P2P (Bybit + OKX + Binance)
+// ============================================
+
 const CF_PROXY = "https://p2p-proxy.jos-159lot.workers.dev/?url=";
+const P2P_CANTIDAD = 5;
+const P2P_CACHE_KEY = "p2p_rate";
+const P2P_CACHE_TTL = 120;
+
+function p2pFetch(exchange, targetUrl, options) {
+  try {
+    const opts = { muteHttpExceptions: true };
+    if (options) Object.assign(opts, options);
+    const resp = UrlFetchApp.fetch(CF_PROXY + encodeURIComponent(targetUrl), opts);
+    Logger.log(exchange + " HTTP: " + resp.getResponseCode());
+    if (resp.getResponseCode() !== 200) return null;
+    return JSON.parse(resp.getContentText());
+  } catch (e) {
+    Logger.log("Error " + exchange + ": " + e);
+    return null;
+  }
+}
+
+function filtrarPrecios(items, getprecio, cantidad) {
+  const precios = [];
+  for (let i = 0; i < items.length && precios.length < cantidad; i++) {
+    const precio = parseFloat(getprecio(items[i]) || 0);
+    if (precio > 3 && precio < 5) precios.push(precio);
+  }
+  return precios;
+}
 
 function obtenerPreciosBybit(cantidad) {
-  try {
-    const targetUrl = "https://api2.bybit.com/fiat/otc/item/online";
-    const body = JSON.stringify({
-      userId: "",
-      tokenId: "USDT",
-      currencyId: "PEN",
-      payment: [],
-      side: "0",
-      size: String(cantidad),
-      page: "1",
-      amount: "",
-      authMaker: false,
-      canTrade: false,
-    });
-
-    const resp = UrlFetchApp.fetch(CF_PROXY + encodeURIComponent(targetUrl), {
-      method: "post",
-      contentType: "application/json",
-      payload: body,
-      muteHttpExceptions: true,
-    });
-
-    Logger.log("Bybit HTTP: " + resp.getResponseCode());
-    if (resp.getResponseCode() !== 200) return [];
-
-    const json = JSON.parse(resp.getContentText());
-    if (!json || !json.result || !json.result.items) return [];
-
-    const precios = [];
-    for (let i = 0; i < json.result.items.length && precios.length < cantidad; i++) {
-      const precio = parseFloat(json.result.items[i].price || json.result.items[i].advPrice || 0);
-      if (precio > 3 && precio < 5) precios.push(precio);
-    }
-
-    Logger.log("Bybit precios: " + JSON.stringify(precios));
-    return precios;
-  } catch (e) {
-    Logger.log("Error Bybit: " + e);
-    return [];
-  }
+  const json = p2pFetch("Bybit", "https://api2.bybit.com/fiat/otc/item/online", {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({
+      userId: "", tokenId: "USDT", currencyId: "PEN",
+      payment: [], side: "0", size: String(cantidad),
+      page: "1", amount: "", authMaker: false, canTrade: false,
+    }),
+  });
+  if (!json || !json.result || !json.result.items) return [];
+  return filtrarPrecios(json.result.items, i => i.price || i.advPrice, cantidad);
 }
 
 function obtenerPreciosOKX(cantidad) {
-  try {
-    const targetUrl = "https://www.okx.com/v3/c2c/tradingOrders/books?quoteCurrency=PEN&baseCurrency=USDT&side=buy&paymentMethod=all&userType=all&receivingAds=false";
-
-    const resp = UrlFetchApp.fetch(CF_PROXY + encodeURIComponent(targetUrl), {
-      muteHttpExceptions: true,
-    });
-
-    Logger.log("OKX HTTP: " + resp.getResponseCode());
-    if (resp.getResponseCode() !== 200) return [];
-
-    const json = JSON.parse(resp.getContentText());
-    if (!json || !json.data) return [];
-
-    const buyAds = json.data.buy || [];
-    const sellAds = json.data.sell || [];
-    const ads = buyAds.length > 0 ? buyAds : sellAds;
-
-    Logger.log("OKX buy:" + buyAds.length + " sell:" + sellAds.length);
-
-    const precios = [];
-    for (let i = 0; i < ads.length && precios.length < cantidad; i++) {
-      const precio = parseFloat(ads[i].price || ads[i].advPrice || 0);
-      if (precio > 3 && precio < 5) precios.push(precio);
-    }
-
-    Logger.log("OKX precios: " + JSON.stringify(precios));
-    return precios;
-  } catch (e) {
-    Logger.log("Error OKX: " + e);
-    return [];
-  }
+  const json = p2pFetch("OKX",
+    "https://www.okx.com/v3/c2c/tradingOrders/books?quoteCurrency=PEN&baseCurrency=USDT&side=buy&paymentMethod=all&userType=all&receivingAds=false"
+  );
+  if (!json || !json.data) return [];
+  const ads = (json.data.buy && json.data.buy.length > 0) ? json.data.buy : (json.data.sell || []);
+  return filtrarPrecios(ads, a => a.price || a.advPrice, cantidad);
 }
 
 function obtenerPreciosBinance(cantidad) {
-  try {
-    const targetUrl = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search";
-    const body = JSON.stringify({
-      fiat: "PEN",
-      page: 1,
-      rows: cantidad + 3,
-      tradeType: "SELL",
-      asset: "USDT",
-      payTypes: [],
-    });
-
-    const resp = UrlFetchApp.fetch(CF_PROXY + encodeURIComponent(targetUrl), {
-      method: "post",
-      contentType: "application/json",
-      payload: body,
-      muteHttpExceptions: true,
-    });
-
-    Logger.log("Binance HTTP: " + resp.getResponseCode());
-    if (resp.getResponseCode() !== 200) return [];
-
-    const json = JSON.parse(resp.getContentText());
-    if (!json || !json.data) return [];
-
-    const precios = [];
-    for (let i = 3; i < json.data.length && precios.length < cantidad; i++) {
-      const precio = parseFloat(json.data[i].adv.price || 0);
-      if (precio > 3 && precio < 5) precios.push(precio);
-    }
-
-    Logger.log("Binance precios: " + JSON.stringify(precios));
-    return precios;
-  } catch (e) {
-    Logger.log("Error Binance: " + e);
-    return [];
-  }
-}
-
-function obtenerPreciosBitget(cantidad) {
-  return [];
+  const json = p2pFetch("Binance", "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({
+      fiat: "PEN", page: 1, rows: cantidad + 3,
+      tradeType: "SELL", asset: "USDT", payTypes: [],
+    }),
+  });
+  if (!json || !json.data) return [];
+  return filtrarPrecios(json.data.slice(3), a => a.adv.price, cantidad);
 }
 
 function promedio(arr) {
@@ -714,97 +660,22 @@ function promedio(arr) {
 
 function obtenerTipoCambioP2P() {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get("p2p_rate");
+  const cached = cache.get(P2P_CACHE_KEY);
   if (cached) {
     const num = parseFloat(cached);
-    if (!isNaN(num) && num > 3 && num < 5) {
-      Logger.log("Tipo de cambio desde cache: " + num);
-      return num;
-    }
-    cache.remove("p2p_rate");
+    if (!isNaN(num) && num > 3 && num < 5) return num;
+    cache.remove(P2P_CACHE_KEY);
   }
 
-  const CANTIDAD = 5;
-  const preciosBybit = obtenerPreciosBybit(CANTIDAD);
-  const preciosOKX = obtenerPreciosOKX(CANTIDAD);
-  const preciosBinance = obtenerPreciosBinance(CANTIDAD);
+  const preciosBybit = obtenerPreciosBybit(P2P_CANTIDAD);
+  const preciosOKX = obtenerPreciosOKX(P2P_CANTIDAD);
+  const preciosBinance = obtenerPreciosBinance(P2P_CANTIDAD);
 
-  const promBybit = promedio(preciosBybit);
-  const promOKX = promedio(preciosOKX);
-  const promBinance = promedio(preciosBinance);
+  const promedios = [promedio(preciosBybit), promedio(preciosOKX), promedio(preciosBinance)].filter(p => p > 0);
+  const mejor = promedios.length > 0 ? Math.max(...promedios) : 0;
 
-  Logger.log("Promedios - Bybit:" + promBybit + " OKX:" + promOKX + " Binance:" + promBinance);
-
-  const promedios = [promBybit, promOKX, promBinance].filter(p => p > 0);
-  let mejorPromedio = promedios.length > 0 ? Math.max(...promedios) : 0;
-
-  Logger.log("Mejor promedio P2P: " + mejorPromedio);
-
-  if (mejorPromedio > 3 && mejorPromedio < 5) {
-    cache.put("p2p_rate", mejorPromedio.toString(), 120);
-  }
-
-  return mejorPromedio;
-}
-
-function escribirTipoCambio(sheet, cellRef, valor) {
-  sheet.getRange(cellRef).setValue(valor).setNumberFormat("0.000");
-}
-
-function GetTipoCambioP2P(sheetName) {
-  const { sheet } = getSheet(sheetName);
-  if (!sheet) return null;
-
-  const dollarCell = sheet.getName() === DEFAULT_SHEET_NAME ? "F2" : "F7";
-  const tipoCambio = obtenerTipoCambioP2P();
-
-  if (tipoCambio > 0) {
-    escribirTipoCambio(sheet, dollarCell, tipoCambio);
-    SpreadsheetApp.flush();
-    return tipoCambio;
-  }
-
-  Logger.log("No se pudo obtener tipo de cambio P2P, limpiando valor existente");
-  const cell = sheet.getRange(dollarCell);
-  const valorActual = cell.getValue();
-  if (valorActual === "N/A" || valorActual === "" || valorActual === null || isNaN(valorActual)) {
-    cell.setValue(0).setNumberFormat("0.000");
-    SpreadsheetApp.flush();
-  }
-  return null;
-}
-
-function actualizarTipoCambioP2P(sheetName) {
-  try {
-    const valor = obtenerTipoCambioP2P();
-    if (!valor || valor <= 0) {
-      return { success: false, message: "No se pudo obtener el tipo de cambio" };
-    }
-
-    const ss = getSpreadsheet();
-    const sheets = ss.getSheets().filter(s => !s.isSheetHidden());
-
-    sheets.forEach(s => {
-      const name = s.getName();
-      const cell = name === DEFAULT_SHEET_NAME ? "F2" : "F7";
-      const celdaActual = s.getRange(cell).getValue();
-      if (celdaActual !== valor) {
-        s.getRange(cell).setValue(valor).setNumberFormat("0.000");
-      }
-    });
-
-    SpreadsheetApp.flush();
-    return { success: true, valor: valor };
-  } catch (e) {
-    Logger.log("Error actualizarTipoCambioP2P: " + e);
-    return { success: false, message: e.toString() };
-  }
-}
-
-function limpiarCacheP2P() {
-  const cache = CacheService.getScriptCache();
-  cache.remove("p2p_rate");
-  Logger.log("Cache P2P limpiado");
+  if (mejor > 3 && mejor < 5) cache.put(P2P_CACHE_KEY, mejor.toString(), P2P_CACHE_TTL);
+  return mejor;
 }
 
 function actualizarP2PCompleto() {
@@ -813,24 +684,22 @@ function actualizarP2PCompleto() {
     const sheet = ss.getSheetByName(DEFAULT_SHEET_NAME);
     if (!sheet) return { success: false };
 
-    const CANTIDAD = 5;
-    const preciosBinance = obtenerPreciosBinance(CANTIDAD);
-    const preciosBybit = obtenerPreciosBybit(CANTIDAD);
-    const preciosOKX = obtenerPreciosOKX(CANTIDAD);
+    const preciosBinance = obtenerPreciosBinance(P2P_CANTIDAD);
+    const preciosBybit = obtenerPreciosBybit(P2P_CANTIDAD);
+    const preciosOKX = obtenerPreciosOKX(P2P_CANTIDAD);
 
     const promBinance = promedio(preciosBinance);
     const promBybit = promedio(preciosBybit);
     const promOKX = promedio(preciosOKX);
 
-    // Limpiar y escribir tabla P-S
+    // Escribir tabla P-S
     sheet.getRange("P1:S7").clearContent();
-
     sheet.getRange("P1").setValue("");
     sheet.getRange("Q1").setValue("Binance");
     sheet.getRange("R1").setValue("Bybit");
     sheet.getRange("S1").setValue("OKX");
 
-    for (let i = 0; i < CANTIDAD; i++) {
+    for (let i = 0; i < P2P_CANTIDAD; i++) {
       const row = i + 2;
       sheet.getRange("P" + row).setValue("Precio " + (i + 1));
       if (preciosBinance[i]) sheet.getRange("Q" + row).setValue(preciosBinance[i]);
@@ -847,27 +716,16 @@ function actualizarP2PCompleto() {
     sheet.getRange("P7:S7").setFontWeight("bold");
     sheet.getRange("Q2:S7").setNumberFormat("0.000");
     sheet.getRange("P1:S7").setHorizontalAlignment("center");
-
     SpreadsheetApp.flush();
 
     const promedios = [promBinance, promBybit, promOKX].filter(p => p > 0);
-    const mejorPromedio = promedios.length > 0 ? Math.max(...promedios) : 0;
+    const mejor = promedios.length > 0 ? Math.max(...promedios) : 0;
 
-    return {
-      success: true,
-      binance: promBinance,
-      bybit: promBybit,
-      okx: promOKX,
-      mejor: mejorPromedio,
-    };
+    return { success: true, binance: promBinance, bybit: promBybit, okx: promOKX, mejor: mejor };
   } catch (e) {
     Logger.log("Error actualizarP2PCompleto: " + e);
     return { success: false, message: e.toString() };
   }
-}
-
-function actualizarTablaP2P() {
-  return actualizarP2PCompleto();
 }
 
 function actualizarTipoCambioManual() {
@@ -875,11 +733,8 @@ function actualizarTipoCambioManual() {
   if (!resp.success || resp.mejor <= 0) return resp;
 
   const ss = getSpreadsheet();
-  const sheets = ss.getSheets().filter(s => !s.isSheetHidden());
-
-  sheets.forEach(s => {
-    const name = s.getName();
-    const cell = name === DEFAULT_SHEET_NAME ? "F2" : "F7";
+  ss.getSheets().filter(s => !s.isSheetHidden()).forEach(s => {
+    const cell = s.getName() === DEFAULT_SHEET_NAME ? "F2" : "F7";
     s.getRange(cell).setValue(resp.mejor).setNumberFormat("0.000");
   });
 
@@ -887,52 +742,8 @@ function actualizarTipoCambioManual() {
   return resp;
 }
 
-function probarP2P() {
-  const ss = getSpreadsheet();
-  const sheet = ss.getSheetByName(DEFAULT_SHEET_NAME);
-  if (!sheet) return;
-
-  const CANTIDAD = 5;
-  const preciosBinance = obtenerPreciosBinance(CANTIDAD);
-  const preciosBybit = obtenerPreciosBybit(CANTIDAD);
-  const preciosOKX = obtenerPreciosOKX(CANTIDAD);
-
-  const promBinance = promedio(preciosBinance);
-  const promBybit = promedio(preciosBybit);
-  const promOKX = promedio(preciosOKX);
-
-  // Limpiar area
-  sheet.getRange("P1:S7").clearContent();
-
-  // Encabezados
-  sheet.getRange("P1").setValue("");
-  sheet.getRange("Q1").setValue("Binance");
-  sheet.getRange("R1").setValue("Bybit");
-  sheet.getRange("S1").setValue("OKX");
-
-  // Precios fila por fila
-  for (let i = 0; i < CANTIDAD; i++) {
-    const row = i + 2;
-    sheet.getRange("P" + row).setValue("Precio " + (i + 1));
-    if (preciosBinance[i]) sheet.getRange("Q" + row).setValue(preciosBinance[i]);
-    if (preciosBybit[i]) sheet.getRange("R" + row).setValue(preciosBybit[i]);
-    if (preciosOKX[i]) sheet.getRange("S" + row).setValue(preciosOKX[i]);
-  }
-
-  // Promedios en fila 7
-  sheet.getRange("P7").setValue("Promedio");
-  if (promBinance > 0) sheet.getRange("Q7").setValue(promBinance);
-  if (promBybit > 0) sheet.getRange("R7").setValue(promBybit);
-  if (promOKX > 0) sheet.getRange("S7").setValue(promOKX);
-
-  // Formato
-  sheet.getRange("P1:S1").setFontWeight("bold").setFontSize(11);
-  sheet.getRange("P7:S7").setFontWeight("bold");
-  sheet.getRange("Q2:S7").setNumberFormat("0.000");
-  sheet.getRange("P1:S7").setHorizontalAlignment("center");
-
-  SpreadsheetApp.flush();
-  return Math.max(promBinance, promBybit, promOKX);
+function limpiarCacheP2P() {
+  CacheService.getScriptCache().remove(P2P_CACHE_KEY);
 }
 
 // ============================================
@@ -1083,7 +894,7 @@ function crearNuevoCapital(datos) {
     aplicarFormatoEstructuraCapital(sheet);
 
     // Actualizar tipo de cambio inicial
-    GetTipoCambioP2P(nombre);
+    actualizarTipoCambioManual();
 
     SpreadsheetApp.flush();
     return {

@@ -830,7 +830,6 @@
     google.script.run
       .withSuccessHandler(function (resumen) {
         renderizarResumen(resumen);
-        actualizarTipoCambioEnBackground();
       })
       .withFailureHandler(function (error) {
         showAlert("error", "Error al cargar resumen: " + error);
@@ -838,26 +837,18 @@
       .obtenerResumen(currentSheet);
   }
 
-  function actualizarTipoCambioEnBackground() {
-    // Ya no se ejecuta automáticamente
-  }
-
   function actualizarTablaP2P() {
     if (!isGASAvailable()) return;
     google.script.run
       .withSuccessHandler(function (resp) {
         if (resp && resp.success) {
-          const el = document.getElementById("tipoCambioVenta");
-          if (el && resp.mejor) {
-            el.textContent = resp.mejor.toFixed(3);
-            el.classList.add("highlight");
-          }
+          actualizarValorTC(resp.mejor);
         }
       })
       .withFailureHandler(function (e) {
-        console.warn("No se pudo actualizar tabla P2P:", e);
+        console.warn("Error tabla P2P:", e);
       })
-      .actualizarTablaP2P();
+      .actualizarP2PCompleto();
   }
 
   function actualizarTipoCambioManual() {
@@ -871,9 +862,8 @@
     google.script.run
       .withSuccessHandler(function (resp) {
         if (resp && resp.success) {
-          const el = document.getElementById("tipoCambioVenta");
-          if (el && resp.mejor) el.textContent = resp.mejor.toFixed(3);
-          showAlert("success", "TC actualizado: " + resp.mejor.toFixed(3));
+          actualizarValorTC(resp.mejor);
+          showAlert("success", "TC: " + resp.mejor.toFixed(3));
         } else {
           showAlert("error", "No se pudo actualizar");
         }
@@ -890,6 +880,18 @@
         }
       })
       .actualizarTipoCambioManual();
+  }
+
+  function actualizarValorTC(valor) {
+    const el = document.getElementById("tipoCambioVenta");
+    if (!el || !valor) return;
+    const textNode = el.firstChild;
+    if (textNode && textNode.nodeType === 3) {
+      textNode.textContent = valor.toFixed(3);
+    } else {
+      el.insertBefore(document.createTextNode(valor.toFixed(3)), el.firstChild);
+    }
+    el.classList.add("highlight");
   }
 
   function mostrarErrorCarga(mensaje) {
