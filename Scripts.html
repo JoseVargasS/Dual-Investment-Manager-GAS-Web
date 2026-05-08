@@ -180,12 +180,15 @@
       cargarOperaciones();
       cargarResumen();
       cargarPrecioETH();
+      actualizarTablaP2P();
     }, 100);
 
     ethPriceTimer = setInterval(
       () => cargarPrecioETH(true),
       ETH_PRICE_REFRESH_MS,
     );
+
+    setInterval(actualizarTablaP2P, 60000);
 
     // Delegación de eventos para tablas - Optimizada
     const setupDelegation = (id) => {
@@ -825,11 +828,68 @@
     }
 
     google.script.run
-      .withSuccessHandler(renderizarResumen)
+      .withSuccessHandler(function (resumen) {
+        renderizarResumen(resumen);
+        actualizarTipoCambioEnBackground();
+      })
       .withFailureHandler(function (error) {
         showAlert("error", "Error al cargar resumen: " + error);
       })
       .obtenerResumen(currentSheet);
+  }
+
+  function actualizarTipoCambioEnBackground() {
+    // Ya no se ejecuta automáticamente
+  }
+
+  function actualizarTablaP2P() {
+    if (!isGASAvailable()) return;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (resp && resp.success) {
+          const el = document.getElementById("tipoCambioVenta");
+          if (el && resp.mejor) {
+            el.textContent = resp.mejor.toFixed(3);
+            el.classList.add("highlight");
+          }
+        }
+      })
+      .withFailureHandler(function (e) {
+        console.warn("No se pudo actualizar tabla P2P:", e);
+      })
+      .actualizarTablaP2P();
+  }
+
+  function actualizarTipoCambioManual() {
+    if (!isGASAvailable()) return;
+    const btn = document.getElementById("btnRefreshTC");
+    if (btn) {
+      btn.disabled = true;
+      btn.style.animation = "spin 1s linear infinite";
+    }
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (resp && resp.success) {
+          const el = document.getElementById("tipoCambioVenta");
+          if (el && resp.mejor) el.textContent = resp.mejor.toFixed(3);
+          showAlert("success", "TC actualizado: " + resp.mejor.toFixed(3));
+        } else {
+          showAlert("error", "No se pudo actualizar");
+        }
+        if (btn) {
+          btn.disabled = false;
+          btn.style.animation = "";
+        }
+      })
+      .withFailureHandler(function (e) {
+        showAlert("error", "Error: " + e);
+        if (btn) {
+          btn.disabled = false;
+          btn.style.animation = "";
+        }
+      })
+      .actualizarTipoCambioManual();
   }
 
   function mostrarErrorCarga(mensaje) {
@@ -1375,10 +1435,13 @@
         if (options.editableRows && options.editableRows.includes(idx))
           extraClasses = "editable";
 
+        const isTipoCambio = label.toLowerCase().includes("tipo cambio") || label.toLowerCase().includes("cambio venta");
+        const valueId = isTipoCambio ? ' id="tipoCambioVenta"' : "";
+
         card += `
            <div class="resumen-item">
              <span class="resumen-label">${sanitize(label)}</span>
-             <span class="resumen-value ${extraClasses}" 
+             <span class="resumen-value ${extraClasses}"${valueId}
                ${extraClasses.includes("editable") ? `onclick="editarCelda(this, '${idx === 1 ? "B4" : "B6"}', '${sanitize(label)}')" data-note="${sanitize(idx === 1 ? data.notaB4 : data.notaB6)}" data-formula="${sanitize(idx === 1 ? data.formulaB4 : data.formulaB6)}"` : ""}>
                ${sanitize(valor)}
              </span>
@@ -1489,6 +1552,19 @@
 
     DOM.resumenContainer.innerHTML = html || "<p>No hay datos disponibles</p>";
     raf(() => DOM.resumenContainer.classList.add("show"));
+
+    // Agregar botón de actualizar TC junto al valor
+    const tcEl = document.getElementById("tipoCambioVenta");
+    if (tcEl && !document.getElementById("btnRefreshTC")) {
+      const btn = document.createElement("button");
+      btn.id = "btnRefreshTC";
+      btn.onclick = actualizarTipoCambioManual;
+      btn.title = "Actualizar TC";
+      btn.style.cssText = "background:none;border:none;cursor:pointer;padding:0;margin-left:6px;vertical-align:middle;display:inline-flex;align-items:center;";
+      btn.innerHTML = '<i data-lucide="refresh-cw" style="width:13px;height:13px;color:var(--primary);pointer-events:none;"></i>';
+      tcEl.appendChild(btn);
+      refreshIcons();
+    }
 
     // Inicializar calculadora si existe
     const calcApr = document.getElementById("calcApr");
