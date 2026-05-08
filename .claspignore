@@ -11,3 +11,4 @@
 agent-manager.json
 package-lock.json
 package.json
+cloudflare-worker.js
