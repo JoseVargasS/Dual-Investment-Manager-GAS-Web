@@ -701,21 +701,22 @@ function actualizarP2PCompleto() {
 
     for (let i = 0; i < P2P_CANTIDAD; i++) {
       const row = i + 2;
-      sheet.getRange("P" + row).setValue("Precio " + (i + 1));
+      sheet.getRange("O" + row).setValue("Precio " + (i + 1));
       if (preciosBinance[i]) sheet.getRange("Q" + row).setValue(preciosBinance[i]);
       if (preciosBybit[i]) sheet.getRange("R" + row).setValue(preciosBybit[i]);
       if (preciosOKX[i]) sheet.getRange("S" + row).setValue(preciosOKX[i]);
     }
 
-    sheet.getRange("P7").setValue("Promedio");
+    sheet.getRange("O7").setValue("Promedio");
     if (promBinance > 0) sheet.getRange("Q7").setValue(promBinance);
     if (promBybit > 0) sheet.getRange("R7").setValue(promBybit);
     if (promOKX > 0) sheet.getRange("S7").setValue(promOKX);
 
-    sheet.getRange("P1:S1").setFontWeight("bold").setFontSize(11);
-    sheet.getRange("P7:S7").setFontWeight("bold");
+    sheet.getRange("Q1:S1").setFontWeight("bold").setFontSize(11);
+    sheet.getRange("Q7:S7").setFontWeight("bold");
     sheet.getRange("Q2:S7").setNumberFormat("0.000");
-    sheet.getRange("P1:S7").setHorizontalAlignment("center");
+    sheet.getRange("Q1:S7").setHorizontalAlignment("center");
+    sheet.getRange("O2:O7").setHorizontalAlignment("left");
     SpreadsheetApp.flush();
 
     const promedios = [promBinance, promBybit, promOKX].filter(p => p > 0);
