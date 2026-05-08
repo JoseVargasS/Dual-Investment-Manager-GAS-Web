@@ -183,25 +183,21 @@ function obtenerOperacionesDashboard(sheetName) {
   }
 }
 
-function calcularAprPromedioOperaciones(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow < FIRST_DATA_ROW) return "0.00%";
+function calcularDiasNetProfit(sheet) {
+  try {
+    const fechaInicio = sheet.getRange(FIRST_DATA_ROW, COL.FECHA_INICIO).getValue();
+    if (!(fechaInicio instanceof Date) || isNaN(fechaInicio.getTime())) return null;
 
-  const numRows = lastRow - FIRST_DATA_ROW + 1;
-  const values = sheet
-    .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, COL.APR - COL.FECHA_INICIO + 1)
-    .getValues();
-  const aprs = [];
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
 
-  values.forEach((row) => {
-    const fecha = row[0];
-    const apr = parseFloat(row[COL.APR - COL.FECHA_INICIO]);
-    if (fecha && isFinite(apr) && apr >= 0 && apr <= 10) aprs.push(apr);
-  });
-
-  if (!aprs.length) return "0.00%";
-  const avg = aprs.reduce((sum, apr) => sum + apr, 0) / aprs.length;
-  return (avg * 100).toFixed(2) + "%";
+    const diffDias = (hoy.getTime() - fechaInicio.getTime()) / 86400000;
+    const dias = Math.ceil(diffDias);
+    return isFinite(dias) ? Math.max(0, dias) : null;
+  } catch (e) {
+    Logger.log("Error calculando dias NET PROFIT: " + e);
+    return null;
+  }
 }
 
 // ============================================
@@ -620,6 +616,7 @@ function completarOperacion(fila, monedaFinal, sheetName) {
 function obtenerResumen(sheetName) {
   try {
     const { sheet } = getSheet(sheetName);
+    const diasNetProfit = calcularDiasNetProfit(sheet);
 
     let cuadro1 = [],
       cuadro2 = [],
@@ -646,8 +643,6 @@ function obtenerResumen(sheetName) {
       } else {
         // Para nuevas pestañas, el resumen está en E2:F8
         cuadro3 = sheet.getRange("E2:F8").getDisplayValues();
-        const aprPromedio = calcularAprPromedioOperaciones(sheet);
-        if (aprPromedio && cuadro3[4]) cuadro3[4][1] = aprPromedio;
       }
     } catch (e) {
       Logger.log("Error obteniendo cuadro3: " + e);
@@ -679,6 +674,7 @@ function obtenerResumen(sheetName) {
       cuadro1,
       cuadro2,
       cuadro3,
+      diasNetProfit,
       notaB6,
       notaB4,
       formulaB6,
@@ -959,7 +955,7 @@ function crearNuevoCapital(datos) {
         "=ROUND(IFERROR(INDEX(S:S,MATCH(9.99999999999999E+307,S:S))-F3,0), 2)",
       ],
       ["Promedio Diario", "=IFERROR(F4 / CEILING(MAX(E:E)-MIN(E:E), 1), 0)"],
-      ["%APR Promedio", "=AVERAGE(J16:J1000)"],
+      ["%APR Promedio", "=AVERAGE(W16:W1000)"],
       ["Tipo Cambio Venta", ""],
       ["Capital Final (S/)", "=(F3+F4)*F7"],
     ];

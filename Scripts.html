@@ -31,6 +31,7 @@
   const cacheDOM = () => {
     [
       "formOperacion",
+      "capitalOperacion",
       "modalDetalle",
       "activasContainer",
       "historialContainer",
@@ -115,6 +116,10 @@
     DOM.fechaInicio.addEventListener(
       "input",
       createClearErrorListener("groupFecha"),
+    );
+    DOM.capitalOperacion.addEventListener(
+      "change",
+      createClearErrorListener("groupCapitalOperacion"),
     );
     DOM.cex.addEventListener("change", createClearErrorListener("groupCex"));
     DOM.monto.addEventListener("input", createClearErrorListener("groupMonto"));
@@ -488,6 +493,12 @@
     // Limpiar errores previos
     clearFormErrors();
 
+    const capitalOperacion = DOM.capitalOperacion.value || currentSheet;
+    if (!capitalOperacion) {
+      showFieldError("groupCapitalOperacion", "errorCapitalOperacion");
+      return { valid: false, field: "capitalOperacion" };
+    }
+
     const fechaInput = DOM.fechaInicio.value;
     if (!fechaInput) {
       showFieldError("groupFecha", "errorFecha");
@@ -553,6 +564,7 @@
       valid: true,
       datos: {
         fechaInicio: fechaLocalExacta,
+        capitalOperacion,
         cex,
         monto,
         moneda,
@@ -613,12 +625,31 @@
         return;
       }
 
-      // Solo crear fila pendiente si no estamos editando
-      let pendingRowCreated = false;
-      if (!window.editandoFila) {
-        crearFilaPendiente(datos);
-        pendingRowCreated = true;
-      }
+      const estabaEditando = !!window.editandoFila;
+      const sheetDestino = estabaEditando
+        ? window.editandoSheet || currentSheet
+        : datos.capitalOperacion || currentSheet;
+      if (estabaEditando) datos.fila = window.editandoFila;
+
+      cerrarFormularioDirecto();
+      raf(() => {
+        if (estabaEditando) {
+          DOM.activasContainer.innerHTML = skeletonTabla(4);
+        } else {
+          crearFilaPendiente({ ...datos, capitalOperacion: sheetDestino });
+        }
+      });
+
+      window.editandoFila = null;
+      window.editandoSheet = null;
+      DOM.formOperacion.reset();
+      DOM.capitalOperacion.disabled = false;
+      DOM.capitalOperacion.value = currentSheet;
+      if (DOM.btnCancelar) DOM.btnCancelar.style.display = "none";
+      DOM.btnGuardar?.classList.remove("btn-warning");
+      setFechaHoraActual();
+      clearFormErrors();
+      setFormLoading(false);
 
       const successHandler = function (response) {
         setFormLoading(false);
@@ -626,35 +657,11 @@
         if (response && response.success) {
           showAlert(
             "success",
-            window.editandoFila
+            estabaEditando
               ? "Operación actualizada correctamente"
               : "Operación guardada correctamente",
           );
 
-          if (window.editandoFila) {
-            const submitBtn = DOM.btnGuardar;
-            const iconNormal = submitBtn.querySelector(".btn-icon-normal");
-            const spinnerContainer = submitBtn.querySelector(
-              ".btn-spinner-container",
-            );
-            const btnText = submitBtn.querySelector(".btn-text");
-            if (iconNormal) iconNormal.style.display = "";
-            if (spinnerContainer) spinnerContainer.style.display = "none";
-            if (btnText) btnText.textContent = "Guardar Operación";
-            submitBtn.classList.remove("btn-warning");
-
-            const btnCancel = DOM.btnCancelar;
-            if (btnCancel) btnCancel.style.display = "none";
-
-            window.editandoFila = null;
-            window.editandoSheet = null;
-            DOM.formOperacion.reset();
-            setFechaHoraActual();
-            clearFormErrors();
-          }
-
-          // Cerrar el modal flotante después de guardar exitosamente
-          cerrarFormularioDirecto();
 
           cargarOperaciones(true);
           cargarResumen(true);
@@ -674,17 +681,16 @@
         cargarOperaciones(true); // Recargar
       };
 
-      if (window.editandoFila) {
-        datos.fila = window.editandoFila;
+      if (estabaEditando) {
         google.script.run
           .withSuccessHandler(successHandler)
           .withFailureHandler(failureHandler)
-          .actualizarOperacionFila(datos, window.editandoSheet || currentSheet);
+          .actualizarOperacionFila(datos, sheetDestino);
       } else {
         google.script.run
           .withSuccessHandler(successHandler)
           .withFailureHandler(failureHandler)
-          .agregarOperacion(datos, currentSheet);
+          .agregarOperacion(datos, sheetDestino);
       }
     } catch (error) {
       console.error("Error en guardarOperacion:", error);
@@ -1319,6 +1325,8 @@
     }
 
     seleccionarCEX(op.cex || "");
+    DOM.capitalOperacion.value = targetSheet;
+    DOM.capitalOperacion.disabled = true;
     DOM.monto.value = op.monto || "";
     DOM.moneda.value = op.moneda || "";
     filtrarOpcionesTipo(op.moneda || "");
@@ -1346,6 +1354,8 @@
     window.editandoFila = null;
     window.editandoSheet = null;
     DOM.formOperacion.reset();
+    DOM.capitalOperacion.disabled = false;
+    DOM.capitalOperacion.value = currentSheet;
     seleccionarCEX("OKX"); // Reset custom select
     setFechaHoraActual();
 
@@ -1539,6 +1549,11 @@
       return !isNaN(num) && num < 0;
     }
 
+    const netProfitLabel =
+      data.diasNetProfit !== null && data.diasNetProfit !== undefined
+        ? `NET PROFIT en ${data.diasNetProfit} dias`
+        : "NET PROFIT";
+
     let html = "";
 
     // Si es la pestaña principal, mostrar el diseño original
@@ -1583,7 +1598,7 @@
           <div class="resumen-card resumen-calc-card">
             <h3> Resultados</h3>
             <div class="resumen-item"><span class="resumen-label">Capital Inicial</span><span class="resumen-value">${sanitize(String(rows[0][2] || ""))}</span></div>
-            <div class="resumen-item"><span class="resumen-label">NET PROFIT</span><span class="resumen-value ${netProfitClass}">${sanitize(netProfitRaw)}</span></div>
+            <div class="resumen-item"><span class="resumen-label">${sanitize(netProfitLabel)}</span><span class="resumen-value ${netProfitClass}">${sanitize(netProfitRaw)}</span></div>
             <div class="resumen-item"><span class="resumen-label">Promedio Diario</span><span class="resumen-value highlight">${sanitize(promedioStr)}/día</span></div>
             <div class="resumen-item calc-editable-item">
               <span class="resumen-label">%APR</span>
@@ -1622,7 +1637,7 @@
               }
               return `
             <div class="resumen-item">
-              <span class="resumen-label">${sanitize(String(row[0] || ""))}</span>
+              <span class="resumen-label">${sanitize(i === 2 ? netProfitLabel : String(row[0] || ""))}</span>
               <span class="resumen-value ${valueClass}">
                 ${(i === 0 || i === 6) && !rowVal.includes("S/") ? "S/ " : ""}${sanitize(rowVal)}${i === 3 ? "/día" : ""}
               </span>
@@ -1694,6 +1709,7 @@
         const options = $("capitalOptions");
         const select = $("capitalSelect");
         const vistaSelect = $("vistaCapitalSelect");
+        const operacionSelect = $("capitalOperacion");
 
         if (!trigger || !options || !select) return;
         if (list && list.length && !capitalInicializado) {
@@ -1707,6 +1723,7 @@
         options.innerHTML = "";
         select.innerHTML = "";
         if (vistaSelect) vistaSelect.innerHTML = "";
+        if (operacionSelect) operacionSelect.innerHTML = "";
 
         list.forEach((name) => {
           // Opción para custom select
@@ -1730,6 +1747,14 @@
             vistaOpt.textContent = name;
             vistaOpt.selected = name === currentSheet;
             vistaSelect.appendChild(vistaOpt);
+          }
+
+          if (operacionSelect) {
+            const opOpt = document.createElement("option");
+            opOpt.value = name;
+            opOpt.textContent = name;
+            opOpt.selected = name === currentSheet;
+            operacionSelect.appendChild(opOpt);
           }
         });
 
@@ -1759,9 +1784,11 @@
     const trigger = $("capitalSelectedText");
     const nativeSelect = $("capitalSelect");
     const vistaSelect = $("vistaCapitalSelect");
+    const operacionSelect = $("capitalOperacion");
     if (trigger) trigger.textContent = name;
     if (nativeSelect) nativeSelect.value = name;
     if (vistaSelect) vistaSelect.value = name;
+    if (operacionSelect && !window.editandoFila) operacionSelect.value = name;
     $$("#capitalOptions .custom-option").forEach((opt) => {
       opt.classList.toggle("selected", opt.textContent === name);
     });
@@ -2374,6 +2401,7 @@
     if (
       container.querySelector(".empty-state") ||
       container.querySelector(".loading") ||
+      container.querySelector(".skeleton-table") ||
       container.querySelector(".error-state")
     ) {
       container.innerHTML = `
@@ -2381,6 +2409,7 @@
         <table>
           <thead>
             <tr>
+              <th>Capital</th>
               <th>Fecha Inicio</th>
               <th>CEX</th>
               <th>Monto</th>
@@ -2388,6 +2417,8 @@
               <th>Operación</th>
               <th>Interés</th>
               <th>Total calc.</th>
+              <th>APR Acum.</th>
+              <th>APR Ef.</th>
               <th>Acciones</th>
             </tr>
           </thead>
@@ -2411,6 +2442,9 @@
     row.className = "operacion-row anim-row-pending";
     row.innerHTML = `
     <td class="td-nowrap">
+      <span class="badge-duration">${sanitize(datos.capitalOperacion || currentSheet)}</span>
+    </td>
+    <td class="td-nowrap">
       <div style="margin-bottom:2px;">${fechaInicio}</div>
       <div class="badge-duration">Procesando...</div>
     </td>
@@ -2427,10 +2461,12 @@
     </td>
     <td><div class="skeleton" style="width:60px; height:18px;"></div></td>
     <td><div class="skeleton" style="width:60px; height:18px;"></div></td>
+    <td><div class="skeleton" style="width:52px; height:18px;"></div></td>
+    <td><div class="skeleton" style="width:52px; height:18px;"></div></td>
     <td></td>
   `;
 
-    tbody.prepend(row);
+    tbody.appendChild(row);
 
     // Scrollear a la tabla para ver el feedback
     container.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2480,6 +2516,10 @@
   // FORMULARIO FLOTANTE
   // ============================================
   function mostrarFormulario() {
+    if (!window.editandoFila && DOM.capitalOperacion) {
+      DOM.capitalOperacion.disabled = false;
+      DOM.capitalOperacion.value = currentSheet;
+    }
     const modal = document.getElementById("modalFormulario");
     if (modal) {
       modal.classList.add("active");

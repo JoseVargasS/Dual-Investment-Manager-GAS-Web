@@ -185,6 +185,16 @@
         </div>
         <form id="formOperacion">
           <div class="form-grid">
+            <div class="form-group" id="groupCapitalOperacion">
+              <label for="capitalOperacion" class="label-new-op">Capital</label>
+              <select id="capitalOperacion" required>
+                <option value="">Seleccionar capital...</option>
+              </select>
+              <span class="form-error" id="errorCapitalOperacion"
+                >Selecciona un capital</span
+              >
+            </div>
+
             <div class="form-group" id="groupFecha">
               <label for="fechaInicio">Fecha y Hora de Inicio</label>
               <input type="datetime-local" id="fechaInicio" required />
