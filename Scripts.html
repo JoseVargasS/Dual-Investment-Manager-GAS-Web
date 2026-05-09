@@ -1063,7 +1063,7 @@
       html += `
       <tr class="operacion-row" data-fila="${op.fila}" data-sheet="${sheetSafe}" data-historial="false">
         <td class="td-nowrap">
-          <span class="badge-duration">${sheetSafe}</span>
+          <span class="badge-duration badge-capital">${sheetSafe}</span>
         </td>
         <td class="td-nowrap">
           <div style="margin-bottom:2px;">${fechaInicio}</div>
@@ -1382,6 +1382,177 @@
   // ============================================
   // MODAL
   // ============================================
+  function obtenerActivoOperacion(tipoOperacion, moneda) {
+    const texto = String(tipoOperacion || moneda || "").toUpperCase();
+    if (texto.includes("BTC")) return "BTC";
+    if (texto.includes("ETH")) return "ETH";
+    return moneda === "BTC" || moneda === "ETH" ? moneda : "ETH";
+  }
+
+  function calcularRetornosOperacion(op) {
+    const tipo = String(op.tipoOperacion || "");
+    const moneda = op.moneda || "USDT";
+    const activo = obtenerActivoOperacion(tipo, moneda);
+    const precioObjetivo = parseFloat(op.precioObjetivo);
+    const monto = parseFloat(op.monto);
+    const interes = parseFloat(op.interes);
+
+    if (
+      !precioObjetivo ||
+      isNaN(precioObjetivo) ||
+      !monto ||
+      isNaN(monto) ||
+      isNaN(interes)
+    ) {
+      return null;
+    }
+
+    const baseUSDT = moneda === "USDT" ? monto : monto * precioObjetivo;
+    const totalUSDT = baseUSDT + interes;
+    const baseActivo = moneda === "USDT" ? monto / precioObjetivo : monto;
+    const interesActivo = interes / precioObjetivo;
+    const totalActivo = baseActivo + interesActivo;
+    const esCompra = tipo.startsWith("Buy");
+
+    const escenarioUSDT = {
+      condicionHtml: esCompra ? "&gt;" : "&ge;",
+      monedaFinal: "USDT",
+      total: totalUSDT,
+      suscripcion: baseUSDT,
+      interes,
+      destacado: !esCompra,
+      descripcion: esCompra ? "Vence por encima" : "Vence en o por encima",
+    };
+
+    const escenarioActivo = {
+      condicionHtml: esCompra ? "&le;" : "&lt;",
+      monedaFinal: activo,
+      total: totalActivo,
+      suscripcion: baseActivo,
+      interes: interesActivo,
+      destacado: esCompra,
+      descripcion: esCompra ? "Vence en o por debajo" : "Vence por debajo",
+    };
+
+    return {
+      activo,
+      precioObjetivo,
+      escenarios: esCompra
+        ? [escenarioActivo, escenarioUSDT]
+        : [escenarioUSDT, escenarioActivo],
+    };
+  }
+
+  function formatearCantidadRetorno(valor, moneda) {
+    if (valor === null || valor === undefined || valor === "" || isNaN(Number(valor))) {
+      return "-";
+    }
+    if (moneda === "USDT") return FORMATO_USD.format(valor) + " USDT";
+    return FORMATO_CRYPTO.format(valor) + " " + moneda;
+  }
+
+  function formatearMontoDetalle(valor, moneda) {
+    const mon = moneda || "USDT";
+    return formatearCantidadRetorno(valor, mon);
+  }
+
+  function formatearFinalDetalle(valor, moneda) {
+    const mon = moneda || "USDT";
+    return formatearCantidadRetorno(valor, mon);
+  }
+
+  function formatearPrecioRetorno(valor) {
+    return formatearNumero(valor) + " USDT";
+  }
+
+  function normalizarPrecioActualUSDT(texto) {
+    return String(texto || "").replace(/^\$\s*/, "") + " USDT";
+  }
+
+  function cambiarEscenarioRetorno(button) {
+    const panel = button.closest(".returns-panel");
+    if (!panel) return;
+
+    const index = button.dataset.index;
+    panel.querySelectorAll(".returns-option").forEach(function (option) {
+      const active = option.dataset.index === index;
+      option.classList.toggle("is-active", active);
+      option.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    panel.querySelectorAll(".returns-result").forEach(function (result) {
+      result.classList.toggle("is-active", result.dataset.index === index);
+    });
+  }
+
+  function renderizarRetornosOperacion(op) {
+    const retornos = calcularRetornosOperacion(op);
+    if (!retornos) return "";
+
+    const precio = formatearPrecioRetorno(retornos.precioObjetivo);
+    const precioActual =
+      retornos.activo === "ETH" &&
+      DOM.ethPriceValue &&
+      !["", "Cargando...", "Sin dato"].includes(DOM.ethPriceValue.textContent)
+        ? `<span class="returns-current-price"><i data-lucide="badge-dollar-sign"></i> ETH actual: ${sanitize(normalizarPrecioActualUSDT(DOM.ethPriceValue.textContent))}</span>`
+        : "";
+
+    const activeIndex = Math.max(
+      retornos.escenarios.findIndex(function (escenario) {
+        return escenario.destacado;
+      }),
+      0,
+    );
+    const options = retornos.escenarios
+      .map(function (escenario, index) {
+        const active = index === activeIndex;
+        return `
+        <button
+          type="button"
+          class="returns-option${active ? " is-active" : ""}"
+          data-index="${index}"
+          onclick="cambiarEscenarioRetorno(this)"
+          aria-selected="${active ? "true" : "false"}"
+        >
+          ${escenario.condicionHtml} ${precio}
+        </button>
+      `;
+      })
+      .join("");
+
+    const results = retornos.escenarios
+      .map(function (escenario, index) {
+        const active = index === activeIndex;
+        return `
+        <div class="returns-result${active ? " is-active" : ""}" data-index="${index}">
+          <p class="returns-copy">${escenario.descripcion}: <strong>${escenario.condicionHtml} ${precio}</strong></p>
+          <div class="returns-amount">
+            ${formatearCantidadRetorno(escenario.total, escenario.monedaFinal)}
+          </div>
+          <div class="returns-breakdown">
+            <span>Suscripcion: ${formatearCantidadRetorno(escenario.suscripcion, escenario.monedaFinal)}</span>
+            <span>Interes: ${formatearCantidadRetorno(escenario.interes, escenario.monedaFinal)}</span>
+          </div>
+        </div>
+      `;
+      })
+      .join("");
+
+    return `
+      <section class="returns-panel">
+        <div class="returns-header">
+          <h4>Retornos</h4>
+          ${precioActual}
+        </div>
+        <div class="returns-switch" role="tablist" aria-label="Escenarios de retorno">
+          ${options}
+        </div>
+        <div class="returns-results">
+          ${results}
+        </div>
+      </section>
+    `;
+  }
+
   function mostrarDetalle(fila, esHistorial, sheetName) {
     const targetSheet = sheetName || currentSheet;
     const operaciones = esHistorial
@@ -1398,20 +1569,17 @@
     const moneda = op.moneda || "USDT";
     const monedaFinal = op.monedaFinal || "-";
 
-    const monedaKey = getMonedaKey(moneda);
-
     let html = `
+    ${!esHistorial ? renderizarRetornosOperacion(op) : ""}
     <div class="detail-item">
       <div class="detail-label">Capital</div>
       <div class="detail-value highlight">${sanitize(op.sheetName || targetSheet)}</div>
     </div>
     <div class="detail-item">
-      <div class="detail-label">Fecha de Inicio</div>
-      <div class="detail-value">${fechaInicio}</div>
-    </div>
-    <div class="detail-item">
-      <div class="detail-label">Fecha de Fin</div>
-      <div class="detail-value">${fechaFin}</div>
+      <div class="detail-label">Periodo</div>
+      <div class="detail-value detail-periodo">
+        <span>Desde</span> ${fechaInicio} <span>hasta</span> ${fechaFin}
+      </div>
     </div>
     <div class="detail-item">
       <div class="detail-label">CEX</div>
@@ -1423,9 +1591,7 @@
     </div>
     <div class="detail-item">
       <div class="detail-label">Monto Inicial</div>
-      <div class="detail-value" style="display:flex; align-items:center; gap:8px;">
-        ${formatearMonto(op.monto, op.moneda)} <span class="badge badge-${monedaKey}">${moneda}</span>
-      </div>
+      <div class="detail-value">${formatearMontoDetalle(op.monto, op.moneda)}</div>
     </div>
     <div class="detail-item">
       <div class="detail-label">% APR</div>
@@ -1438,8 +1604,8 @@
     ${
       !esHistorial
         ? (() => {
-            const interesStr = formatearInteres(op.interes, moneda);
-            const totalStr = formatearTotal(op.total);
+            const interesStr = formatearCantidadRetorno(op.interes, "USDT");
+            const totalStr = formatearCantidadRetorno(op.total, "USDT");
             return `
       <div class="detail-item">
         <div class="detail-label">Interés a Ganar</div>
@@ -1453,16 +1619,12 @@
           })()
         : ""
     }
-    <div class="detail-item">
-      <div class="detail-label">Precio Objetivo</div>
-      <div class="detail-value">$${formatearNumero(op.precioObjetivo)}</div>
-    </div>
   `;
 
     if (esHistorial) {
-      const interesStr = formatearInteres(op.interes, moneda);
-      const totalStr = formatearTotal(op.total);
-      const finalStr = formatearFinal(
+      const interesStr = formatearCantidadRetorno(op.interes, "USDT");
+      const totalStr = formatearCantidadRetorno(op.total, "USDT");
+      const finalStr = formatearFinalDetalle(
         op.final,
         monedaFinal !== "-" ? monedaFinal : moneda,
       );
@@ -2442,7 +2604,7 @@
     row.className = "operacion-row anim-row-pending";
     row.innerHTML = `
     <td class="td-nowrap">
-      <span class="badge-duration">${sanitize(datos.capitalOperacion || currentSheet)}</span>
+      <span class="badge-duration badge-capital">${sanitize(datos.capitalOperacion || currentSheet)}</span>
     </td>
     <td class="td-nowrap">
       <div style="margin-bottom:2px;">${fechaInicio}</div>

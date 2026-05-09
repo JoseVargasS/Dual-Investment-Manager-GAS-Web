@@ -1001,6 +1001,10 @@
     flex-shrink: 0;
   }
 
+  .badge-capital::before {
+    display: none;
+  }
+
   .badge-duration.live::before {
     background: var(--primary);
     animation: blink-dot 1s ease-in-out infinite;
@@ -1331,6 +1335,142 @@
     gap: var(--space-sm);
   }
 
+  .returns-panel {
+    width: min(100%, 460px);
+    margin: 0 auto;
+    padding: 12px 14px;
+    background: linear-gradient(
+      145deg,
+      rgba(0, 255, 148, 0.12),
+      var(--bg-secondary) 42%,
+      rgba(98, 126, 234, 0.1)
+    );
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      0 16px 34px rgba(0, 0, 0, 0.1);
+  }
+
+  .returns-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: 8px;
+  }
+
+  .returns-header h4 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .returns-current-price {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .returns-current-price svg {
+    width: 14px;
+    height: 14px;
+    color: #627eea;
+  }
+
+  .returns-switch {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    width: min(100%, 286px);
+    margin: 0 auto 8px;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border-color-light);
+    border-radius: var(--radius-full);
+    box-shadow: inset 0 1px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  .returns-option {
+    min-width: 0;
+    min-height: 30px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-family: var(--font-main);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    transition: var(--transition-fast);
+  }
+
+  .returns-option:hover {
+    color: var(--text-primary);
+  }
+
+  .returns-option.is-active {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: 0 0 0 1px rgba(0, 255, 148, 0.24),
+      0 8px 18px rgba(0, 255, 148, 0.12);
+  }
+
+  .returns-results {
+    min-height: 94px;
+    padding: 6px 8px 2px;
+    text-align: center;
+  }
+
+  .returns-result {
+    display: none;
+  }
+
+  .returns-result.is-active {
+    display: block;
+    animation: fadeIn 0.18s ease;
+  }
+
+  .returns-copy {
+    margin: 0 0 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .returns-copy strong {
+    color: var(--text-primary);
+    font-weight: 800;
+  }
+
+  .returns-amount {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    text-shadow: 0 0 18px rgba(0, 255, 148, 0.12);
+  }
+
+  .returns-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 6px;
+    color: var(--text-tertiary);
+    font-size: 10px;
+    line-height: 1.3;
+  }
+
   .detail-item {
     display: flex;
     justify-content: space-between;
@@ -1364,6 +1504,16 @@
     font-family: var(--font-main);
     text-align: right;
     white-space: nowrap;
+  }
+
+  .detail-periodo {
+    white-space: normal;
+    line-height: 1.35;
+  }
+
+  .detail-periodo span {
+    color: var(--text-tertiary);
+    font-weight: 400;
   }
 
   .detail-value.success {
@@ -2465,6 +2615,40 @@
 
     .detail-grid {
       gap: var(--space-xs);
+    }
+
+    .returns-panel {
+      width: 100%;
+      padding: 10px;
+    }
+
+    .returns-header {
+      align-items: flex-start;
+      flex-direction: column;
+      margin-bottom: 8px;
+    }
+
+    .returns-switch {
+      width: min(100%, 260px);
+    }
+
+    .returns-option {
+      min-height: 28px;
+      padding: 0 6px;
+      font-size: 11px;
+    }
+
+    .returns-amount {
+      font-size: 19px;
+    }
+
+    .returns-results {
+      min-height: 84px;
+      padding-top: 4px;
+    }
+
+    .returns-breakdown {
+      font-size: 9px;
     }
 
     .detail-item {
