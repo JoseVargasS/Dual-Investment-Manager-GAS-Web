@@ -217,12 +217,10 @@
 
     // Pequeño retardo para que google.script.run esté disponible
     setTimeout(function () {
-      cargarCapitanes(function () {
-        cargarOperaciones();
-        cargarResumen();
-        cargarPrecioETH();
-        actualizarTablaP2P();
-      });
+      cargarOperaciones();
+      cargarResumen();
+      cargarPrecioETH();
+      setTimeout(actualizarTablaP2P, 2000);
     }, 100);
 
     ethPriceTimer = setInterval(
@@ -865,6 +863,11 @@
 
   function renderizarOperaciones(response) {
     if (response && response.success) {
+      const sheetCambiada =
+        response.selectedSheet && response.selectedSheet !== currentSheet;
+      if (response.capitals) {
+        poblarSelectorCapitales(response.capitals);
+      }
       if (response.selectedSheet && response.selectedSheet !== currentSheet) {
         currentSheet = response.selectedSheet;
         actualizarSelectorCapital(currentSheet);
@@ -878,6 +881,7 @@
         renderizarActivas(response.activas || []);
         renderizarHistorial(newCompletadas, oldCompletadasLen);
       });
+      if (sheetCambiada) cargarResumen(true);
     } else {
       showAlert(
         "error",
@@ -1916,6 +1920,80 @@
   // ============================================
   // GESTION DE CAPITALES (PESTANAS)
   // ============================================
+  function poblarSelectorCapitales(list) {
+    const capitales =
+      Array.isArray(list) && list.length ? list : [DEFAULT_SHEET_NAME];
+    const trigger = $("capitalSelectedText");
+    const options = $("capitalOptions");
+    const select = $("capitalSelect");
+    const vistaSelect = $("vistaCapitalSelect");
+    const operacionSelect = $("capitalOperacion");
+
+    if (!trigger || !options || !select) return;
+    if (!capitalInicializado) {
+      currentSheet = capitales.includes(currentSheet)
+        ? currentSheet
+        : capitales[0];
+      capitalInicializado = true;
+    } else if (!capitales.includes(currentSheet)) {
+      currentSheet = capitales[0];
+    }
+
+    trigger.textContent = currentSheet;
+    options.innerHTML = "";
+    select.innerHTML = "";
+    if (vistaSelect) vistaSelect.innerHTML = "";
+    if (operacionSelect) operacionSelect.innerHTML = "";
+
+    capitales.forEach((name) => {
+      const opt = document.createElement("div");
+      opt.className =
+        "custom-option" + (name === currentSheet ? " selected" : "");
+      opt.textContent = name;
+      opt.onclick = () => cambiarCapital(name);
+      options.appendChild(opt);
+
+      const nativeOpt = document.createElement("option");
+      nativeOpt.value = name;
+      nativeOpt.textContent = name;
+      nativeOpt.selected = name === currentSheet;
+      select.appendChild(nativeOpt);
+
+      if (vistaSelect) {
+        const vistaOpt = document.createElement("option");
+        vistaOpt.value = name;
+        vistaOpt.textContent = name;
+        vistaOpt.selected = name === currentSheet;
+        vistaSelect.appendChild(vistaOpt);
+      }
+
+      if (operacionSelect) {
+        const opOpt = document.createElement("option");
+        opOpt.value = name;
+        opOpt.textContent = name;
+        opOpt.selected = name === currentSheet;
+        operacionSelect.appendChild(opOpt);
+      }
+    });
+
+    const triggerContainer = $("capitalTrigger");
+    if (!triggerContainer) return;
+
+    triggerContainer.onclick = (e) => {
+      e.stopPropagation();
+      options.classList.toggle("show");
+      triggerContainer.classList.toggle("active");
+    };
+
+    triggerContainer.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        options.classList.toggle("show");
+        triggerContainer.classList.toggle("active");
+      }
+    };
+  }
+
   function cargarCapitanes(onReady) {
     if (!isGASAvailable()) {
       showAlert("error", "No se pudo conectar con Google Apps Script");

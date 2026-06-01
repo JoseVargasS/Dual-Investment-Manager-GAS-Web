@@ -161,7 +161,11 @@ function obtenerOperacionesDashboard(sheetName) {
     const ss = getSpreadsheet();
     const tz = ss.getSpreadsheetTimeZone();
     const sheets = ss.getSheets().filter((s) => !s.isSheetHidden());
-    const selectedSheet = sheetName || (sheets[0] ? sheets[0].getName() : DEFAULT_SHEET_NAME);
+    const capitals = sheets.map((s) => s.getName());
+    const selectedSheet =
+      sheetName && capitals.includes(sheetName)
+        ? sheetName
+        : capitals[0] || DEFAULT_SHEET_NAME;
     const activas = [];
     let completadas = [];
 
@@ -176,6 +180,7 @@ function obtenerOperacionesDashboard(sheetName) {
       activas,
       completadas,
       selectedSheet,
+      capitals,
     };
   } catch (error) {
     Logger.log("Error en obtenerOperacionesDashboard: " + error);
@@ -183,9 +188,12 @@ function obtenerOperacionesDashboard(sheetName) {
   }
 }
 
-function calcularDiasNetProfit(sheet) {
+function calcularDiasNetProfit(sheet, fechaInicioOpt) {
   try {
-    const fechaInicio = sheet.getRange(FIRST_DATA_ROW, COL.FECHA_INICIO).getValue();
+    const fechaInicio =
+      arguments.length > 1
+        ? fechaInicioOpt
+        : sheet.getRange(FIRST_DATA_ROW, COL.FECHA_INICIO).getValue();
     if (!(fechaInicio instanceof Date) || isNaN(fechaInicio.getTime())) return null;
 
     const hoy = new Date();
@@ -616,7 +624,16 @@ function completarOperacion(fila, monedaFinal, sheetName) {
 function obtenerResumen(sheetName) {
   try {
     const { sheet } = getSheet(sheetName);
-    const diasNetProfit = calcularDiasNetProfit(sheet);
+    const isDefault = sheet.getName() === DEFAULT_SHEET_NAME;
+    const fullRange = sheet.getRange("A1:J" + FIRST_DATA_ROW);
+    const fullDisplay = fullRange.getDisplayValues();
+    const fullValues = fullRange.getValues();
+    const notasEditables = sheet.getRange("B4:B6").getNotes();
+    const formulasEditables = sheet.getRange("B4:B6").getFormulas();
+    const diasNetProfit = calcularDiasNetProfit(
+      sheet,
+      fullValues[FIRST_DATA_ROW - 1][COL.FECHA_INICIO - 1],
+    );
 
     let cuadro1 = [],
       cuadro2 = [],
@@ -626,23 +643,23 @@ function obtenerResumen(sheetName) {
       notaB4 = "",
       formulaB4 = "";
 
-    // Obtener valores formateados de cada cuadro
+    // Extraer los cuadros desde una lectura amplia para reducir viajes a Sheets.
     try {
-      cuadro1 = sheet.getRange("A3:B11").getDisplayValues();
+      cuadro1 = fullDisplay.slice(2, 11).map((row) => [row[0], row[1]]);
     } catch (e) {
       Logger.log("Error A3:B11: " + e);
     }
     try {
-      cuadro2 = sheet.getRange("E2:F5").getDisplayValues();
+      cuadro2 = fullDisplay.slice(1, 5).map((row) => [row[4], row[5]]);
     } catch (e) {
       Logger.log("Error E2:F5: " + e);
     }
     try {
-      if (sheet.getName() === DEFAULT_SHEET_NAME) {
-        cuadro3 = sheet.getRange("H2:J8").getDisplayValues();
+      if (isDefault) {
+        cuadro3 = fullDisplay.slice(1, 8).map((row) => [row[7], row[8], row[9]]);
       } else {
         // Para nuevas pestañas, el resumen está en E2:F8
-        cuadro3 = sheet.getRange("E2:F8").getDisplayValues();
+        cuadro3 = fullDisplay.slice(1, 8).map((row) => [row[4], row[5]]);
       }
     } catch (e) {
       Logger.log("Error obteniendo cuadro3: " + e);
@@ -650,14 +667,12 @@ function obtenerResumen(sheetName) {
 
     // Obtener notas y fórmulas de celdas editables
     try {
-      const cellB6 = sheet.getRange("B6");
-      notaB6 = cellB6.getNote() || "";
-      formulaB6 = cellB6.getFormula() || "";
+      notaB6 = notasEditables[2][0] || "";
+      formulaB6 = formulasEditables[2][0] || "";
     } catch (e) { }
     try {
-      const cellB4 = sheet.getRange("B4");
-      notaB4 = cellB4.getNote() || "";
-      formulaB4 = cellB4.getFormula() || "";
+      notaB4 = notasEditables[0][0] || "";
+      formulaB4 = formulasEditables[0][0] || "";
     } catch (e) { }
 
     Logger.log(
