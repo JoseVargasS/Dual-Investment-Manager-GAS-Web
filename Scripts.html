@@ -51,6 +51,9 @@
       "ethPriceWidget",
       "ethPriceValue",
       "ethPriceStatus",
+      "hasFechaFin",
+      "fechaFinCustom",
+      "groupFechaFin",
     ].forEach((id) => {
       DOM[id] = document.getElementById(id);
     });
@@ -115,7 +118,17 @@
     // Limpiar errores al interactuar con los campos
     DOM.fechaInicio.addEventListener(
       "input",
-      createClearErrorListener("groupFecha"),
+      function () {
+        clearFieldError("groupFecha");
+        if (DOM.hasFechaFin && DOM.hasFechaFin.checked && DOM.fechaInicio.value) {
+          const fechaInicioVal = DOM.fechaInicio.value.split("T")[0];
+          DOM.fechaFinCustom.min = fechaInicioVal;
+        }
+      }
+    );
+    DOM.fechaFinCustom.addEventListener(
+      "change",
+      createClearErrorListener("groupFechaFin"),
     );
     DOM.capitalOperacion.addEventListener(
       "change",
@@ -321,12 +334,20 @@
       const minutes = String(fechaUTC.getUTCMinutes()).padStart(2, "0");
 
       DOM.fechaInicio.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+
+      if (DOM.fechaFinCustom) {
+        DOM.fechaFinCustom.min = `${year}-${month}-${day}`;
+      }
     } catch (e) {
       console.error("Error al establecer fecha:", e);
       // Fallback to current time
       const ahora = new Date();
       const localISO = ahora.toISOString().slice(0, 16);
       DOM.fechaInicio.value = localISO;
+
+      if (DOM.fechaFinCustom) {
+        DOM.fechaFinCustom.min = localISO.split("T")[0];
+      }
     }
   }
 
@@ -560,10 +581,30 @@
       return { valid: false, field: "precioObjetivo" };
     }
 
+    let fechaFinExacta = null;
+    if (DOM.hasFechaFin && DOM.hasFechaFin.checked) {
+      const fechaFinInput = DOM.fechaFinCustom.value;
+      if (!fechaFinInput) {
+        showFieldError("groupFechaFin", "errorFechaFin");
+        return { valid: false, field: "fechaFinCustom" };
+      }
+
+      // Combine date with T03:00
+      fechaFinExacta = fechaFinInput + "T03:00";
+
+      const dInicio = new Date(fechaLocalExacta.replace("T", " ").substring(0, 16).replace(/-/g, "/"));
+      const dFin = new Date((fechaFinInput + " 03:00:00").replace(/-/g, "/"));
+      if (dFin.getTime() <= dInicio.getTime()) {
+        showFieldError("groupFechaFin", "errorFechaFin");
+        return { valid: false, field: "fechaFinCustom" };
+      }
+    }
+
     return {
       valid: true,
       datos: {
         fechaInicio: fechaLocalExacta,
+        fechaFin: fechaFinExacta,
         capitalOperacion,
         cex,
         monto,
@@ -643,6 +684,7 @@
       window.editandoFila = null;
       window.editandoSheet = null;
       DOM.formOperacion.reset();
+      resetCustomFechaFin();
       DOM.capitalOperacion.disabled = false;
       DOM.capitalOperacion.value = currentSheet;
       if (DOM.btnCancelar) DOM.btnCancelar.style.display = "none";
@@ -1335,6 +1377,20 @@
     DOM.tipoOperacion.value = op.tipoOperacion || "";
     DOM.precioObjetivo.value = op.precioObjetivo || "";
 
+    if (op.fechaFin) {
+      const rawFin = op.fechaFin.substring(0, 10);
+      DOM.fechaFinCustom.value = rawFin;
+      DOM.hasFechaFin.checked = true;
+      DOM.fechaFinCustom.style.display = "block";
+      if (op.fechaInicio) {
+        DOM.fechaFinCustom.min = op.fechaInicio.substring(0, 10);
+      }
+    } else {
+      DOM.hasFechaFin.checked = false;
+      DOM.fechaFinCustom.value = "";
+      DOM.fechaFinCustom.style.display = "none";
+    }
+
     window.editandoFila = fila;
     window.editandoSheet = targetSheet;
 
@@ -1354,6 +1410,7 @@
     window.editandoFila = null;
     window.editandoSheet = null;
     DOM.formOperacion.reset();
+    resetCustomFechaFin();
     DOM.capitalOperacion.disabled = false;
     DOM.capitalOperacion.value = currentSheet;
     seleccionarCEX("OKX"); // Reset custom select
@@ -2726,4 +2783,26 @@
       document.body.setAttribute("data-theme", "light");
     }
   });
+
+  function toggleFechaFinInput() {
+    clearFieldError("groupFechaFin");
+    if (DOM.hasFechaFin.checked) {
+      DOM.fechaFinCustom.style.display = "block";
+      if (DOM.fechaInicio.value) {
+        const fechaInicioVal = DOM.fechaInicio.value.split("T")[0];
+        DOM.fechaFinCustom.min = fechaInicioVal;
+      }
+    } else {
+      DOM.fechaFinCustom.style.display = "none";
+      DOM.fechaFinCustom.value = "";
+    }
+  }
+
+  function resetCustomFechaFin() {
+    if (DOM.hasFechaFin) DOM.hasFechaFin.checked = false;
+    if (DOM.fechaFinCustom) {
+      DOM.fechaFinCustom.value = "";
+      DOM.fechaFinCustom.style.display = "none";
+    }
+  }
 </script>

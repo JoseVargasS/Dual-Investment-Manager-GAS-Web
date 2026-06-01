@@ -397,7 +397,7 @@ function agregarOperacion(datos, sheetName) {
 
     // Calcular fechas de inicio y fin
     const fechaInicio = parseFechaISO(datos.fechaInicio, tz);
-    const fechaFin = calcFechaFin(fechaInicio, tz, datos.cex);
+    const fechaFin = datos.fechaFin ? parseFechaISO(datos.fechaFin, tz) : calcFechaFin(fechaInicio, tz, datos.cex);
 
     // Datos para columnas E-L (entrada manual del usuario)
     const rowData = [
@@ -549,7 +549,7 @@ function actualizarOperacionFila(datos, sheetName) {
 
     // Calcular nuevas fechas
     const fechaInicio = parseFechaISO(datos.fechaInicio, tz);
-    const fechaFin = calcFechaFin(fechaInicio, tz, datos.cex);
+    const fechaFin = datos.fechaFin ? parseFechaISO(datos.fechaFin, tz) : calcFechaFin(fechaInicio, tz, datos.cex);
 
     const f = datos.fila;
     const rowData = [

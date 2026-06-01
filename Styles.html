@@ -632,6 +632,89 @@
     opacity: 0.4;
   }
 
+  /* Contenedor de Fecha de Fin Personalizada */
+  .fecha-fin-container {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    gap: var(--space-md, 12px);
+    width: 100%;
+    max-width: 280px;
+    justify-self: end;
+  }
+
+  .checkbox-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    user-select: none;
+    color: var(--text-secondary);
+  }
+
+  .checkbox-container input {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+    height: 0;
+    width: 0;
+  }
+
+  .checkbox-custom {
+    position: relative;
+    height: 18px;
+    width: 18px;
+    background-color: var(--bg-primary);
+    border: 2px solid var(--border-color);
+    border-radius: 4px;
+    transition: all var(--transition-fast);
+  }
+
+  .checkbox-container:hover input ~ .checkbox-custom {
+    border-color: var(--rh-gray-400);
+  }
+
+  [data-theme="dark"] .checkbox-container:hover input ~ .checkbox-custom {
+    border-color: var(--rh-gray-500);
+  }
+
+  .checkbox-container input:checked ~ .checkbox-custom {
+    background-color: var(--primary);
+    border-color: var(--primary);
+  }
+
+  .checkbox-custom:after {
+    content: "";
+    position: absolute;
+    display: none;
+    left: 5px;
+    top: 1px;
+    width: 4px;
+    height: 8px;
+    border: solid #121212;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  [data-theme="light"] .checkbox-custom:after {
+    border-color: #ffffff;
+  }
+
+  .checkbox-container input:checked ~ .checkbox-custom:after {
+    display: block;
+  }
+
+  /* Estilos específicos para el date picker compacto */
+  #fechaFinCustom {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 13px;
+    height: 38px;
+    box-sizing: border-box;
+    max-width: 150px;
+  }
+
   .form-error {
     display: none;
     color: var(--danger);
@@ -1689,6 +1772,74 @@
   .modal-form .form-actions {
     padding: 0 var(--space-lg) var(--space-lg);
     margin-top: 0;
+  }
+
+  /* Optimizaciones para evitar scroll en escritorio de forma compacta y elegante */
+  @media (min-width: 769px) {
+    .modal-form {
+      max-width: 500px; /* Estrecho, estético y compacto */
+      max-height: 96vh;
+      overflow-y: auto;
+    }
+
+    .modal-form .form-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: var(--space-md) var(--space-lg);
+    }
+
+    .modal-form .form-group {
+      grid-template-columns: 140px 1fr;
+      padding: 6px 12px;
+      gap: 2px var(--space-md);
+    }
+
+    .modal-form .form-group label {
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .modal-form .form-group input,
+    .modal-form .form-group select,
+    .modal-form .form-group .custom-select-container,
+    .modal-form .fecha-fin-container {
+      max-width: 100%;
+      justify-self: stretch;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+
+    .modal-form .custom-select-trigger {
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+
+    .modal-form #fechaFinCustom {
+      height: 32px;
+      padding: 4px 8px;
+      font-size: 12px;
+      max-width: 140px;
+    }
+
+    .modal-form .checkbox-container {
+      font-size: 12px;
+    }
+
+    .modal-form .checkbox-custom {
+      height: 16px;
+      width: 16px;
+    }
+
+    .modal-form .checkbox-custom:after {
+      left: 4px;
+      top: 0px;
+    }
+
+    .modal-form .form-actions {
+      padding: 0 var(--space-lg) var(--space-md);
+      margin-top: var(--space-xs);
+    }
   }
 
   @keyframes slideUp {
