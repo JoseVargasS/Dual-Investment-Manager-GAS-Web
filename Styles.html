@@ -382,6 +382,7 @@
 
   .anim-row-new,
   .anim-row-edit,
+  .anim-row-updated,
   .anim-row-exit,
   .anim-row-collapse,
   .toast,
@@ -515,6 +516,92 @@
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
+  }
+
+  .capital-management-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    margin: -4px 0 var(--space-md);
+  }
+
+  .btn-capital-tool {
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    transition: var(--transition-fast);
+  }
+
+  .btn-capital-tool svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .btn-capital-tool:hover:not(:disabled) {
+    border-color: var(--primary);
+    color: var(--primary);
+    transform: translateY(-1px);
+  }
+
+  .btn-capital-tool:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-capital-archive {
+    color: var(--warning);
+  }
+
+  .capital-archive-panel {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .capital-archive-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .capital-archive-label svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .capital-archive-label strong {
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .capital-archive-select {
+    min-width: 160px;
   }
 
   /* ========================================
@@ -760,13 +847,34 @@
   }
 
   /* Calendar picker */
-  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    opacity: 0.6;
-    transition: opacity var(--transition-fast);
+  input[type="date"],
+  input[type="datetime-local"] {
+    color-scheme: light;
   }
 
-  input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  [data-theme="dark"] input[type="date"],
+  [data-theme="dark"] input[type="datetime-local"] {
+    color-scheme: dark;
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    padding: 3px;
+    border-radius: var(--radius-sm);
+    opacity: 0.85;
+    transition:
+      opacity var(--transition-fast),
+      background-color var(--transition-fast);
+  }
+
+  input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  input[type="date"]::-webkit-calendar-picker-indicator:focus,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator:focus {
+    background-color: var(--bg-tertiary);
     opacity: 1;
   }
 
@@ -1333,6 +1441,138 @@
 
   .resumen-value.highlight {
     color: var(--accent);
+  }
+
+  .resumen-month-card {
+    grid-column: 1 / -1;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 48%),
+      var(--bg-secondary);
+    border-color: color-mix(in srgb, var(--border-color) 70%, var(--primary) 30%);
+  }
+
+  .month-interest-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+  }
+
+  .month-interest-top h3 {
+    margin-bottom: 0;
+  }
+
+  .month-interest-select {
+    min-width: 128px;
+    max-width: 170px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .month-interest-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .month-interest-rows {
+    display: grid;
+    gap: 8px;
+    transition: opacity 0.18s ease;
+  }
+
+  .month-interest-rows.is-loading {
+    opacity: 0.72;
+  }
+
+  .month-interest-row {
+    display: grid;
+    grid-template-columns: minmax(130px, 1.2fr) repeat(3, minmax(84px, 0.8fr));
+    gap: var(--space-sm);
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color-light);
+  }
+
+  .month-interest-rows .month-interest-row {
+    border-radius: var(--radius-md);
+    padding: 12px 10px;
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+
+  .month-interest-rows .month-interest-row:hover {
+    background: rgba(100, 181, 246, 0.06);
+  }
+
+  .month-interest-row:last-child {
+    border-bottom: none;
+  }
+
+  .month-interest-skeleton-row {
+    min-height: 39px;
+  }
+
+  .skeleton-month-cell {
+    width: 76px;
+    height: 15px;
+    border-radius: var(--radius-full);
+    opacity: 0.58;
+  }
+
+  .skeleton-month-cell.wide {
+    width: min(132px, 100%);
+  }
+
+  .skeleton-month-cell.short {
+    width: 52px;
+  }
+
+  .month-interest-head {
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    opacity: 0.92;
+  }
+
+  .month-interest-capital {
+    color: var(--text-primary);
+    font-weight: 800;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .month-interest-value {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .month-interest-value:not(.eth):not(.count) {
+    color: var(--primary);
+  }
+
+  .month-interest-value.eth {
+    color: var(--color-eth);
+    text-shadow: 0 0 18px color-mix(in srgb, var(--color-eth) 28%, transparent);
+  }
+
+  .month-interest-eth-ref {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0.82;
+    margin-left: 4px;
+    text-shadow: none;
+  }
+
+  .month-interest-value.count {
+    color: var(--text-primary);
+    font-weight: 750;
+    opacity: 0.88;
   }
 
   /* ========================================
@@ -2237,6 +2477,10 @@
     animation: rowEdit 900ms var(--row-anim-ease) both;
   }
 
+  .anim-row-updated {
+    animation: rowUpdated 650ms var(--row-anim-ease) both;
+  }
+
   @keyframes rowEnter {
     0% {
       opacity: 0;
@@ -2275,6 +2519,16 @@
     35% {
       box-shadow: inset 3px 0 0 var(--warning);
       filter: brightness(1.14);
+    }
+  }
+
+  @keyframes rowUpdated {
+    0%,
+    100% {
+      filter: brightness(1);
+    }
+    35% {
+      filter: brightness(1.045);
     }
   }
 
@@ -2716,7 +2970,7 @@
     }
 
     .form-group {
-      grid-template-columns: 105px 1fr;
+      grid-template-columns: 105px minmax(0, 1fr);
       gap: 2px var(--space-sm);
       padding: 8px 10px;
     }
@@ -2746,8 +3000,20 @@
     .form-group select,
     .form-group .custom-select-container {
       grid-column: 2;
+      min-width: 0;
       max-width: 100%;
       justify-self: stretch;
+    }
+
+    .fecha-fin-container {
+      min-width: 0;
+      max-width: 100%;
+      gap: 6px;
+    }
+
+    #fechaFinCustom {
+      min-width: 0;
+      max-width: 100%;
     }
 
     .form-group .form-error {
@@ -2926,6 +3192,44 @@
       flex: 1 1 130px;
       min-width: 0;
       max-width: 100%;
+    }
+
+    .capital-management-toolbar,
+    .capital-archive-panel {
+      align-items: stretch;
+      width: 100%;
+    }
+
+    .btn-capital-tool,
+    .capital-archive-select {
+      flex: 1 1 140px;
+    }
+
+    .capital-archive-label {
+      flex: 1 0 100%;
+    }
+
+    .month-interest-row {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .month-interest-value.eth {
+      white-space: normal;
+      line-height: 1.35;
+    }
+
+    .month-interest-top {
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .month-interest-select {
+      flex: 1 1 130px;
+      max-width: 100%;
+    }
+
+    .month-interest-head {
+      display: none;
     }
 
     .toast-container {

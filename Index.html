@@ -99,6 +99,42 @@
             </select>
             <span id="countHistorial" class="count-badge">—</span>
           </h2>
+          <div class="capital-management-toolbar">
+            <button
+              type="button"
+              id="btnArchivarCapital"
+              class="btn-capital-tool btn-capital-archive"
+              onclick="archivarCapitalActual()"
+              title="Culminar y archivar capital actual"
+            >
+              <i data-lucide="archive"></i>
+              <span>Culminar capital</span>
+            </button>
+            <div id="archivoCapitalesPanel" class="capital-archive-panel">
+              <span class="capital-archive-label">
+                <i data-lucide="folder"></i>
+                Archivados
+                <strong id="capitalArchivadoCount">0</strong>
+              </span>
+              <select
+                id="capitalArchivadoSelect"
+                class="vista-capital-select capital-archive-select"
+                title="Capitales archivados"
+              >
+                <option value="">Sin archivados</option>
+              </select>
+              <button
+                type="button"
+                id="btnRestaurarCapital"
+                class="btn-capital-tool btn-capital-restore"
+                onclick="restaurarCapitalArchivado()"
+                title="Restaurar capital seleccionado"
+              >
+                <i data-lucide="rotate-ccw"></i>
+                <span>Restaurar</span>
+              </button>
+            </div>
+          </div>
           <div id="historialContainer">
             <div class="skeleton-table" aria-hidden="true">
               <div class="skeleton skeleton-row"></div>

@@ -6,6 +6,7 @@
   let prevHistorialCount = 0;
   let currentSheet = "CAPITAL 1";
   let capitalInicializado = false;
+  let selectedInterestMonth = "";
   const DEFAULT_SHEET_NAME = "CAPITAL 1";
   const ETH_PRICE_REFRESH_MS = 3000;
   const P2P_REFRESH_MS = 60000;
@@ -51,6 +52,11 @@
       "ethPriceWidget",
       "ethPriceValue",
       "ethPriceStatus",
+      "btnArchivarCapital",
+      "capitalArchivadoSelect",
+      "capitalArchivadoCount",
+      "btnRestaurarCapital",
+      "archivoCapitalesPanel",
       "hasFechaFin",
       "fechaFinCustom",
       "groupFechaFin",
@@ -672,9 +678,7 @@
 
       cerrarFormularioDirecto();
       raf(() => {
-        if (estabaEditando) {
-          DOM.activasContainer.innerHTML = skeletonTabla(4);
-        } else {
+        if (!estabaEditando) {
           crearFilaPendiente({ ...datos, capitalOperacion: sheetDestino });
         }
       });
@@ -702,8 +706,11 @@
               : "Operación guardada correctamente",
           );
 
-
-          cargarOperaciones(true);
+          if (estabaEditando && response.operacion) {
+            actualizarOperacionActiva(response.operacion);
+          } else {
+            cargarOperaciones(true);
+          }
           cargarResumen(true);
         } else {
           showAlert("error", extraerMensaje(response, "Error en el servidor"));
@@ -829,6 +836,7 @@
       DOM.ethPriceStatus.textContent = response.source || "Binance";
       DOM.ethPriceWidget.title = "Precio actual ETH/USDT en Binance";
       DOM.ethPriceWidget?.classList.remove("eth-price-error");
+      actualizarReferenciasETHMes();
       return;
     }
 
@@ -866,7 +874,7 @@
       const sheetCambiada =
         response.selectedSheet && response.selectedSheet !== currentSheet;
       if (response.capitals) {
-        poblarSelectorCapitales(response.capitals);
+        poblarSelectorCapitales(response.capitals, response.archived || []);
       }
       if (response.selectedSheet && response.selectedSheet !== currentSheet) {
         currentSheet = response.selectedSheet;
@@ -913,7 +921,7 @@
       .withFailureHandler(function (error) {
         showAlert("error", "Error al cargar resumen: " + error);
       })
-      .obtenerResumen(currentSheet);
+      .obtenerResumen(currentSheet, selectedInterestMonth);
   }
 
   function cargarHistorial(silent) {
@@ -1055,58 +1063,21 @@
     return html;
   }
 
-  function renderizarActivas(activas) {
-    const container = $("activasContainer");
-    if (!container) return;
+  function renderFilaActiva(op) {
+    const fechaInicio = formatearFecha(op.fechaInicio);
+    const sheetName = op.sheetName || currentSheet;
+    const sheetSafe = sanitize(sheetName);
+    const montoFormateado = formatearMonto(op.monto, op.moneda);
+    const moneda = op.moneda ? String(op.moneda) : "USDT";
+    const monedaKey = getMonedaKey(moneda);
+    const interesStr = formatearInteres(op.interes, moneda);
+    const totalNum = parseFloat(op.total) || 0;
+    const totalStr = totalNum > 0 ? "$" + FORMATO_USD.format(totalNum) : "-";
+    const duracionBadge = op.tiempoCex
+      ? `<div class="badge-duration live">${op.tiempoCex}</div>`
+      : "";
 
-    actualizarContador("countActivas", activas.length);
-
-    if (!activas || activas.length === 0) {
-      container.innerHTML = `
-      <div class="empty-state">
-        <i data-lucide="satellite" class="empty-state-icon" style="width:48px; height:48px; margin: 0 auto 16px; display: block;"></i>
-        <h3>No hay operaciones activas</h3>
-        <p>Completa el formulario para iniciar una nueva inversión</p>
-      </div>
-    `;
-      return;
-    }
-
-    let totalSumaCalculada = 0;
-
-    // Usar template string optimizado
-    let html = `
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Capital</th><th>Fecha Inicio</th><th>CEX</th><th>Monto</th><th>% APR</th>
-            <th>Operación</th><th>Interés</th>
-            <th>Total calc.</th><th>APR Acum.</th><th>APR Ef.</th><th>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-  `;
-
-    activas.forEach((op) => {
-      const fechaInicio = formatearFecha(op.fechaInicio);
-      const sheetName = op.sheetName || currentSheet;
-      const sheetSafe = sanitize(sheetName);
-      const montoFormateado = formatearMonto(op.monto, op.moneda);
-      const moneda = op.moneda ? String(op.moneda) : "USDT";
-      const monedaKey = getMonedaKey(moneda);
-      const interesStr = formatearInteres(op.interes, moneda);
-
-      const totalNum = parseFloat(op.total) || 0;
-      totalSumaCalculada += totalNum;
-      const totalStr =
-        totalNum > 0 ? "$" + FORMATO_USD.format(totalNum) : "-";
-
-      const duracionBadge = op.tiempoCex
-        ? `<div class="badge-duration live">${op.tiempoCex}</div>`
-        : "";
-
-      html += `
+    return `
       <tr class="operacion-row" data-fila="${op.fila}" data-sheet="${sheetSafe}" data-historial="false">
         <td class="td-nowrap">
           <span class="badge-duration badge-capital">${sheetSafe}</span>
@@ -1149,6 +1120,89 @@
         </td>
       </tr>
     `;
+  }
+
+  function actualizarOperacionActiva(op) {
+    const sheetName = op.sheetName || currentSheet;
+    const index = (operacionesData.activas || []).findIndex(
+      (item) =>
+        item.fila === op.fila &&
+        (item.sheetName || currentSheet) === sheetName,
+    );
+    if (index === -1) {
+      cargarOperaciones(true);
+      return;
+    }
+
+    operacionesData.activas[index] = op;
+    const filaActual = document.querySelector(
+      `.operacion-row[data-fila='${op.fila}'][data-sheet='${escapeCssValue(sheetName)}']:not([data-historial="true"])`,
+    );
+    if (!filaActual) {
+      cargarOperaciones(true);
+      return;
+    }
+
+    const template = document.createElement("tbody");
+    template.innerHTML = renderFilaActiva(op).trim();
+    const filaNueva = template.firstElementChild;
+    filaActual.replaceWith(filaNueva);
+    actualizarTotalActivas();
+    refreshIcons();
+    raf(() => {
+      filaNueva.classList.add("anim-row-updated");
+      setTimeout(() => filaNueva.classList.remove("anim-row-updated"), 650);
+    });
+  }
+
+  function actualizarTotalActivas() {
+    const total = (operacionesData.activas || []).reduce(
+      (suma, op) => suma + (parseFloat(op.total) || 0),
+      0,
+    );
+    const totalEl = DOM.activasContainer?.querySelector(
+      ".table-footer-summary .summary-value",
+    );
+    if (totalEl) totalEl.textContent = "$" + FORMATO_USD.format(total);
+  }
+
+  function renderizarActivas(activas) {
+    const container = $("activasContainer");
+    if (!container) return;
+
+    actualizarContador("countActivas", activas.length);
+
+    if (!activas || activas.length === 0) {
+      container.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="satellite" class="empty-state-icon" style="width:48px; height:48px; margin: 0 auto 16px; display: block;"></i>
+        <h3>No hay operaciones activas</h3>
+        <p>Completa el formulario para iniciar una nueva inversión</p>
+      </div>
+    `;
+      return;
+    }
+
+    let totalSumaCalculada = 0;
+
+    // Usar template string optimizado
+    let html = `
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Capital</th><th>Fecha Inicio</th><th>CEX</th><th>Monto</th><th>% APR</th>
+            <th>Operación</th><th>Interés</th>
+            <th>Total calc.</th><th>APR Acum.</th><th>APR Ef.</th><th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+    activas.forEach((op) => {
+      const totalNum = parseFloat(op.total) || 0;
+      totalSumaCalculada += totalNum;
+      html += renderFilaActiva(op);
     });
 
     html += `
@@ -1530,6 +1584,23 @@
     return String(texto || "").replace(/^\$\s*/, "") + " USDT";
   }
 
+  function obtenerPrecioETHActualNumero() {
+    const raw = DOM.ethPriceValue?.textContent || "";
+    if (!raw || ["Cargando...", "Sin dato"].includes(raw)) return null;
+    const normalized = raw
+      .replace(/[^\d,.-]/g, "")
+      .replace(/\./g, "")
+      .replace(",", ".");
+    const price = parseFloat(normalized);
+    return isNaN(price) || price <= 0 ? null : price;
+  }
+
+  function formatearReferenciaETH(valorEth, precioEth) {
+    if (!precioEth || !isFinite(precioEth)) return "";
+    const usd = (Number(valorEth) || 0) * precioEth;
+    return ` <span class="month-interest-eth-ref">(${FORMATO_USD.format(usd)} USDT)</span>`;
+  }
+
   function cambiarEscenarioRetorno(button) {
     const panel = button.closest(".returns-panel");
     if (!panel) return;
@@ -1772,12 +1843,60 @@
       return !isNaN(num) && num < 0;
     }
 
+    function buildInteresesMesCard(interesesMes) {
+      const rows = Array.isArray(interesesMes?.capitales)
+        ? interesesMes.capitales
+        : [];
+      const label = interesesMes?.label || "mes actual";
+      const selectedMonth = interesesMes?.selectedMonth || "";
+      const meses = Array.isArray(interesesMes?.meses)
+        ? interesesMes.meses
+        : [];
+      selectedInterestMonth = selectedMonth;
+      const options = meses.length
+        ? meses
+            .map((month) => {
+              const selected = month.key === selectedMonth ? " selected" : "";
+              return `<option value="${sanitize(month.key)}"${selected}>${sanitize(month.label)}</option>`;
+            })
+            .join("")
+        : `<option value="${sanitize(selectedMonth)}">${sanitize(label)}</option>`;
+      const body = rows.length
+        ? buildInteresesMesRows(rows)
+        : '<div class="resumen-item"><span class="resumen-label">Sin capitales activos</span><span class="resumen-value">-</span></div>';
+
+      return `
+        <div class="resumen-card resumen-month-card">
+          <div class="month-interest-top">
+            <h3> Intereses del ciclo</h3>
+            <select
+              id="interestMonthSelect"
+              class="vista-capital-select month-interest-select"
+              onchange="cambiarMesIntereses(this.value)"
+              title="Seleccionar mes"
+            >
+              ${options}
+            </select>
+          </div>
+          <div class="month-interest-list">
+            <div class="month-interest-row month-interest-head">
+              <span>Capital</span>
+              <span>USDT</span>
+              <span>ETH</span>
+              <span>Operaciones</span>
+            </div>
+            <div id="monthInterestRows" class="month-interest-rows">${body}</div>
+          </div>
+        </div>`;
+    }
+
     const netProfitLabel =
       data.diasNetProfit !== null && data.diasNetProfit !== undefined
         ? `NET PROFIT en ${data.diasNetProfit} dias`
         : "NET PROFIT";
 
     let html = "";
+    html += buildInteresesMesCard(data.interesesMes);
 
     // Si es la pestaña principal, mostrar el diseño original
     if (currentSheet === DEFAULT_SHEET_NAME) {
@@ -1917,12 +2036,103 @@
     }
   }
 
+  function buildInteresesMesRows(rows) {
+    const precioEth = obtenerPrecioETHActualNumero();
+    return (rows || [])
+      .map((row) => {
+        const usd = Number(row.usd) || 0;
+        const eth = Number(row.eth) || 0;
+        const ops = Number(row.operaciones) || 0;
+        const ethRef = formatearReferenciaETH(eth, precioEth);
+        return `
+          <div class="month-interest-row">
+            <span class="month-interest-capital">${sanitize(row.capital || "-")}</span>
+            <span class="month-interest-value">${FORMATO_USD.format(usd)} USDT</span>
+            <span class="month-interest-value eth" data-eth-value="${eth}">${FORMATO_CRYPTO.format(eth)} ETH${ethRef}</span>
+            <span class="month-interest-value count">${ops} ${ops === 1 ? "op." : "ops."}</span>
+          </div>`;
+      })
+      .join("");
+  }
+
+  function actualizarReferenciasETHMes() {
+    const precioEth = obtenerPrecioETHActualNumero();
+    if (!precioEth) return;
+    $$(".month-interest-value.eth[data-eth-value]").forEach((el) => {
+      const eth = parseFloat(el.dataset.ethValue || "0") || 0;
+      el.innerHTML = `${FORMATO_CRYPTO.format(eth)} ETH${formatearReferenciaETH(eth, precioEth)}`;
+    });
+  }
+
+  function skeletonInteresesMes() {
+    return Array.from({ length: 3 }, () => `
+      <div class="month-interest-row month-interest-skeleton-row" aria-hidden="true">
+        <span class="skeleton skeleton-month-cell wide"></span>
+        <span class="skeleton skeleton-month-cell"></span>
+        <span class="skeleton skeleton-month-cell"></span>
+        <span class="skeleton skeleton-month-cell short"></span>
+      </div>
+    `).join("");
+  }
+
+  function renderizarInteresesMes(interesesMes) {
+    const rowsContainer = $("monthInterestRows");
+    const select = $("interestMonthSelect");
+    if (!rowsContainer) return;
+
+    const rows = Array.isArray(interesesMes?.capitales)
+      ? interesesMes.capitales
+      : [];
+    selectedInterestMonth = interesesMes?.selectedMonth || selectedInterestMonth;
+    if (select && selectedInterestMonth) select.value = selectedInterestMonth;
+
+    rowsContainer.classList.remove("is-loading");
+    rowsContainer.innerHTML = rows.length
+      ? buildInteresesMesRows(rows)
+      : '<div class="resumen-item"><span class="resumen-label">Sin capitales activos</span><span class="resumen-value">-</span></div>';
+  }
+
+  function cambiarMesIntereses(monthKey) {
+    selectedInterestMonth = monthKey || "";
+    const rowsContainer = $("monthInterestRows");
+    const select = $("interestMonthSelect");
+
+    if (!isGASAvailable()) {
+      showAlert("error", "No se pudo conectar con Google Apps Script");
+      return;
+    }
+
+    if (select) select.disabled = true;
+    if (rowsContainer) {
+      rowsContainer.classList.add("is-loading");
+      rowsContainer.innerHTML = skeletonInteresesMes();
+    }
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (select) select.disabled = false;
+        if (resp?.success) {
+          renderizarInteresesMes(resp.interesesMes);
+        } else {
+          if (rowsContainer) rowsContainer.classList.remove("is-loading");
+          showAlert("error", extraerMensaje(resp, "No se pudieron cargar los intereses"));
+        }
+      })
+      .withFailureHandler(function (error) {
+        if (select) select.disabled = false;
+        if (rowsContainer) rowsContainer.classList.remove("is-loading");
+        showAlert("error", "Error: " + extraerMensaje(error, "No se pudieron cargar los intereses"));
+      })
+      .obtenerInteresesMesCapitales(selectedInterestMonth);
+  }
+
   // ============================================
   // GESTION DE CAPITALES (PESTANAS)
   // ============================================
-  function poblarSelectorCapitales(list) {
+  function poblarSelectorCapitales(list, archivedList) {
     const capitales =
       Array.isArray(list) && list.length ? list : [DEFAULT_SHEET_NAME];
+    const archivados = Array.isArray(archivedList) ? archivedList : [];
     const trigger = $("capitalSelectedText");
     const options = $("capitalOptions");
     const select = $("capitalSelect");
@@ -1976,6 +2186,9 @@
       }
     });
 
+    renderizarArchivoCapitales(archivados);
+    actualizarEstadoBotonArchivar(capitales);
+
     const triggerContainer = $("capitalTrigger");
     if (!triggerContainer) return;
 
@@ -1994,6 +2207,47 @@
     };
   }
 
+  function renderizarArchivoCapitales(archivados) {
+    const select = $("capitalArchivadoSelect");
+    const count = $("capitalArchivadoCount");
+    const btnRestaurar = $("btnRestaurarCapital");
+    const list = Array.isArray(archivados) ? archivados : [];
+
+    if (count) count.textContent = String(list.length);
+    if (!select) return;
+
+    select.innerHTML = "";
+    if (!list.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "Sin archivados";
+      select.appendChild(opt);
+      select.disabled = true;
+      if (btnRestaurar) btnRestaurar.disabled = true;
+      return;
+    }
+
+    list.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    });
+    select.disabled = false;
+    if (btnRestaurar) btnRestaurar.disabled = false;
+  }
+
+  function actualizarEstadoBotonArchivar(capitales) {
+    const btn = $("btnArchivarCapital");
+    if (!btn) return;
+    const list = Array.isArray(capitales) ? capitales : [];
+    const disabled = !currentSheet || list.length <= 1 || !list.includes(currentSheet);
+    btn.disabled = disabled;
+    btn.title = disabled
+      ? "Debe quedar al menos un capital activo"
+      : "Culminar y archivar " + currentSheet;
+  }
+
   function cargarCapitanes(onReady) {
     if (!isGASAvailable()) {
       showAlert("error", "No se pudo conectar con Google Apps Script");
@@ -2002,6 +2256,8 @@
 
     google.script.run
       .withSuccessHandler(function (list) {
+        const archivedFromResponse = Array.isArray(list) ? [] : list?.archived || [];
+        list = Array.isArray(list) ? list : list?.active || list?.capitals || [];
         const trigger = $("capitalSelectedText");
         const options = $("capitalOptions");
         const select = $("capitalSelect");
@@ -2055,6 +2311,9 @@
           }
         });
 
+        renderizarArchivoCapitales(archivedFromResponse);
+        actualizarEstadoBotonArchivar(list);
+
         // Eventos para el selector custom
         const triggerContainer = $("capitalTrigger");
         if (!triggerContainer) return;
@@ -2074,7 +2333,7 @@
         };
         if (typeof onReady === "function") onReady(list);
       })
-      .getCapitalsList();
+      .getCapitalsCatalog();
   }
 
   function actualizarSelectorCapital(name) {
@@ -2089,6 +2348,8 @@
     $$("#capitalOptions .custom-option").forEach((opt) => {
       opt.classList.toggle("selected", opt.textContent === name);
     });
+    const capitales = Array.from($("capitalSelect")?.options || []).map((opt) => opt.value);
+    actualizarEstadoBotonArchivar(capitales);
   }
 
   function cambiarCapital(name) {
@@ -2116,6 +2377,83 @@
     actualizarSelectorCapital(name);
     cargarHistorial(false);
     cargarResumen(false);
+  }
+
+  function aplicarRespuestaCatalogo(resp) {
+    if (resp?.capitals) {
+      poblarSelectorCapitales(resp.capitals, resp.archived || []);
+    }
+    if (resp?.selectedSheet) {
+      currentSheet = resp.selectedSheet;
+      actualizarSelectorCapital(currentSheet);
+    }
+  }
+
+  function archivarCapitalActual() {
+    if (!currentSheet) return;
+    if (!isGASAvailable()) {
+      showAlert("error", "No se pudo conectar con Google Apps Script");
+      return;
+    }
+
+    mostrarConfirmacion(
+      "Culminar y archivar " + currentSheet + "?",
+      function () {
+        const btn = $("btnArchivarCapital");
+        if (btn) btn.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (resp) {
+            if (btn) btn.disabled = false;
+            if (resp?.success) {
+              aplicarRespuestaCatalogo(resp);
+              showAlert("success", resp.message || "Capital archivado");
+              refrescarTodo(true);
+            } else {
+              showAlert("error", extraerMensaje(resp, "No se pudo archivar el capital"));
+              const capitales = Array.from($("capitalSelect")?.options || []).map((opt) => opt.value);
+              actualizarEstadoBotonArchivar(capitales);
+            }
+          })
+          .withFailureHandler(function (error) {
+            if (btn) btn.disabled = false;
+            showAlert("error", "Error: " + extraerMensaje(error, "No se pudo archivar"));
+          })
+          .archivarCapital(currentSheet);
+      },
+      function () {
+        const capitales = Array.from($("capitalSelect")?.options || []).map((opt) => opt.value);
+        actualizarEstadoBotonArchivar(capitales);
+      },
+    );
+  }
+
+  function restaurarCapitalArchivado() {
+    const select = $("capitalArchivadoSelect");
+    const name = select ? select.value : "";
+    if (!name) return;
+    if (!isGASAvailable()) {
+      showAlert("error", "No se pudo conectar con Google Apps Script");
+      return;
+    }
+
+    const btn = $("btnRestaurarCapital");
+    if (btn) btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (btn) btn.disabled = false;
+        if (resp?.success) {
+          aplicarRespuestaCatalogo(resp);
+          showAlert("success", resp.message || "Capital restaurado");
+          refrescarTodo(true);
+        } else {
+          showAlert("error", extraerMensaje(resp, "No se pudo restaurar el capital"));
+        }
+      })
+      .withFailureHandler(function (error) {
+        if (btn) btn.disabled = false;
+        showAlert("error", "Error: " + extraerMensaje(error, "No se pudo restaurar"));
+      })
+      .restaurarCapitalArchivado(name);
   }
 
   function mostrarModalCapital() {

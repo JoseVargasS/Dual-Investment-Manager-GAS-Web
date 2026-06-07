@@ -8,6 +8,8 @@
 // ============================================
 const SPREADSHEET_ID = "1g9JBdaZ7eAAhaEjUf5pQs2YEzKAR2QYANXAJHMz0oJc";
 const DEFAULT_SHEET_NAME = "CAPITAL 1";
+const ARCHIVED_CAPITALS_PROP = "ARCHIVED_CAPITALS";
+const ARCHIVED_CAPITAL_NOTE = "DIM_CAPITAL_STATUS=ARCHIVED";
 
 // Los datos individuales empiezan en fila 16
 const FIRST_DATA_ROW = 16;
@@ -160,8 +162,9 @@ function obtenerOperacionesDashboard(sheetName) {
   try {
     const ss = getSpreadsheet();
     const tz = ss.getSpreadsheetTimeZone();
-    const sheets = ss.getSheets().filter((s) => !s.isSheetHidden());
-    const capitals = sheets.map((s) => s.getName());
+    const catalog = obtenerCatalogoCapitales(ss);
+    const sheets = catalog.activeSheets;
+    const capitals = catalog.active;
     const selectedSheet =
       sheetName && capitals.includes(sheetName)
         ? sheetName
@@ -181,6 +184,7 @@ function obtenerOperacionesDashboard(sheetName) {
       completadas,
       selectedSheet,
       capitals,
+      archived: catalog.archived,
     };
   } catch (error) {
     Logger.log("Error en obtenerOperacionesDashboard: " + error);
@@ -256,19 +260,207 @@ function getSheet(sheetName) {
   return { sheet, ss };
 }
 
+function getCapitalProperties() {
+  return PropertiesService.getDocumentProperties();
+}
+
+function normalizarNombreCapital(nombre) {
+  return String(nombre || "").trim();
+}
+
+function hojaTieneMarcaArchivada(sheet) {
+  try {
+    return String(sheet.getRange("A1").getNote() || "").indexOf(ARCHIVED_CAPITAL_NOTE) !== -1;
+  } catch (e) {
+    Logger.log("Error leyendo marca de archivo: " + e);
+    return false;
+  }
+}
+
+function marcarHojaArchivada(sheet) {
+  const markerRange = sheet.getRange("A1");
+  const note = String(markerRange.getNote() || "");
+  if (note.indexOf(ARCHIVED_CAPITAL_NOTE) === -1) {
+    markerRange.setNote(note ? note + "\n" + ARCHIVED_CAPITAL_NOTE : ARCHIVED_CAPITAL_NOTE);
+  }
+}
+
+function limpiarMarcaHojaArchivada(sheet) {
+  const markerRange = sheet.getRange("A1");
+  const note = String(markerRange.getNote() || "");
+  if (note.indexOf(ARCHIVED_CAPITAL_NOTE) === -1) return;
+  const nextNote = note
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== ARCHIVED_CAPITAL_NOTE)
+    .join("\n")
+    .trim();
+  markerRange.setNote(nextNote);
+}
+
+function leerCapitalesArchivados(ss) {
+  try {
+    const props = getCapitalProperties();
+    const raw = props.getProperty(ARCHIVED_CAPITALS_PROP);
+    const names = raw ? JSON.parse(raw) : [];
+    const markedNames = ss
+      .getSheets()
+      .filter(hojaTieneMarcaArchivada)
+      .map((sheet) => sheet.getName());
+    const mergedNames = (Array.isArray(names) ? names : []).concat(markedNames);
+    const validNames = mergedNames
+      .map(normalizarNombreCapital)
+      .filter((name, idx, arr) => name && arr.indexOf(name) === idx && ss.getSheetByName(name));
+
+    if (JSON.stringify(validNames) !== JSON.stringify(names)) {
+      props.setProperty(ARCHIVED_CAPITALS_PROP, JSON.stringify(validNames));
+    }
+    return validNames;
+  } catch (e) {
+    Logger.log("Error leyendo capitales archivados: " + e);
+    return [];
+  }
+}
+
+function guardarCapitalesArchivados(names) {
+  const uniqueNames = (names || [])
+    .map(normalizarNombreCapital)
+    .filter((name, idx, arr) => name && arr.indexOf(name) === idx);
+  getCapitalProperties().setProperty(ARCHIVED_CAPITALS_PROP, JSON.stringify(uniqueNames));
+  return uniqueNames;
+}
+
+function obtenerHojasCapitalActivas(ss) {
+  const archived = leerCapitalesArchivados(ss);
+  const archivedSet = {};
+  archived.forEach((name) => (archivedSet[name] = true));
+  return ss
+    .getSheets()
+    .filter((s) => !s.isSheetHidden() && !archivedSet[s.getName()]);
+}
+
+function obtenerCatalogoCapitales(ss) {
+  const activeSheets = obtenerHojasCapitalActivas(ss);
+  const active = activeSheets.map((s) => s.getName());
+  const archived = leerCapitalesArchivados(ss);
+  return { activeSheets, active, archived };
+}
+
 // Retorna lista de nombres de pestañas (Capitales)
 function getCapitalsList() {
   try {
     const ss = getSpreadsheet();
     if (!ss) return [DEFAULT_SHEET_NAME];
 
-    return ss
-      .getSheets()
-      .filter((s) => !s.isSheetHidden())
-      .map((s) => s.getName());
+    return obtenerCatalogoCapitales(ss).active;
   } catch (e) {
     Logger.log("Error en getCapitalsList: " + e);
     return [DEFAULT_SHEET_NAME];
+  }
+}
+
+function getCapitalsCatalog() {
+  try {
+    const ss = getSpreadsheet();
+    if (!ss) {
+      return {
+        success: true,
+        active: [DEFAULT_SHEET_NAME],
+        archived: [],
+      };
+    }
+    const catalog = obtenerCatalogoCapitales(ss);
+    return {
+      success: true,
+      active: catalog.active,
+      archived: catalog.archived,
+    };
+  } catch (e) {
+    Logger.log("Error en getCapitalsCatalog: " + e);
+    return { success: false, message: e.toString(), active: [DEFAULT_SHEET_NAME], archived: [] };
+  }
+}
+
+function archivarCapital(sheetName) {
+  try {
+    const name = normalizarNombreCapital(sheetName);
+    if (!name) throw new Error("Capital no especificado");
+
+    const ss = getSpreadsheet();
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) throw new Error('No se encontro la pestana "' + name + '"');
+
+    const catalog = obtenerCatalogoCapitales(ss);
+    if (!catalog.active.includes(name)) {
+      return { success: false, message: "Este capital ya esta archivado" };
+    }
+    if (catalog.active.length <= 1) {
+      return { success: false, message: "Debe quedar al menos un capital activo" };
+    }
+
+    const tz = ss.getSpreadsheetTimeZone();
+    const data = leerOperacionesDesdeSheet(sheet, tz);
+    if (data.activas.length > 0) {
+      return {
+        success: false,
+        message: "Completa o elimina las operaciones activas antes de culminar este capital",
+      };
+    }
+
+    const archived = guardarCapitalesArchivados(catalog.archived.concat([name]));
+    marcarHojaArchivada(sheet);
+    const fallback = catalog.active.find((capital) => capital !== name) || DEFAULT_SHEET_NAME;
+    const fallbackSheet = ss.getSheetByName(fallback);
+    if (fallbackSheet) ss.setActiveSheet(fallbackSheet);
+    sheet.hideSheet();
+    SpreadsheetApp.flush();
+
+    const updated = obtenerCatalogoCapitales(ss);
+    return {
+      success: true,
+      message: name + " fue archivado",
+      selectedSheet: fallback,
+      capitals: updated.active,
+      archived,
+    };
+  } catch (e) {
+    Logger.log("Error en archivarCapital: " + e);
+    return { success: false, message: e.toString() };
+  }
+}
+
+function restaurarCapitalArchivado(sheetName) {
+  try {
+    const name = normalizarNombreCapital(sheetName);
+    if (!name) throw new Error("Capital no especificado");
+
+    const ss = getSpreadsheet();
+    const sheet = ss.getSheetByName(name);
+    if (!sheet) throw new Error('No se encontro la pestana "' + name + '"');
+
+    const archived = leerCapitalesArchivados(ss);
+    if (!archived.includes(name)) {
+      return { success: false, message: "Este capital no esta archivado" };
+    }
+
+    const updatedArchived = guardarCapitalesArchivados(
+      archived.filter((capital) => capital !== name),
+    );
+    limpiarMarcaHojaArchivada(sheet);
+    sheet.showSheet();
+    ss.setActiveSheet(sheet);
+    SpreadsheetApp.flush();
+
+    const catalog = obtenerCatalogoCapitales(ss);
+    return {
+      success: true,
+      message: name + " fue restaurado",
+      selectedSheet: name,
+      capitals: catalog.active,
+      archived: updatedArchived,
+    };
+  } catch (e) {
+    Logger.log("Error en restaurarCapitalArchivado: " + e);
+    return { success: false, message: e.toString() };
   }
 }
 
@@ -584,7 +776,17 @@ function actualizarOperacionFila(datos, sheetName) {
     aplicarFormatoFilaOperacion(sheet, r, datos.moneda);
 
     SpreadsheetApp.flush();
-    return { success: true, message: "Operación actualizada correctamente" };
+    const operaciones = leerOperacionesDesdeSheet(sheet, tz);
+    const operacionActualizada =
+      operaciones.activas.find((op) => op.fila === r) ||
+      operaciones.completadas.find((op) => op.fila === r) ||
+      null;
+
+    return {
+      success: true,
+      message: "Operación actualizada correctamente",
+      operacion: operacionActualizada,
+    };
   } catch (error) {
     Logger.log("Error actualizarOperacionFila: " + error);
     return { success: false, message: error.toString() };
@@ -620,10 +822,149 @@ function completarOperacion(fila, monedaFinal, sheetName) {
 // ============================================
 // OBTENER RESUMEN
 // ============================================
-// Obtiene los datos de los cuadros de resumen de la hoja
-function obtenerResumen(sheetName) {
+function toFiniteNumber(value) {
+  if (typeof value === "number" && isFinite(value)) return value;
+  const n = parseFloat(
+    String(value || "")
+      .replace(/[$,%\s]/g, "")
+      .replace(",", "."),
+  );
+  return isNaN(n) ? 0 : n;
+}
+
+const FIRST_PAYMENT_CUTOFF_KEY = "2026-04-06";
+const PAYMENT_CUTOFF_DAY = 6;
+
+function crearFechaLocal(year, monthZeroBased, day) {
+  return new Date(year, monthZeroBased, day, 12, 0, 0, 0);
+}
+
+function fechaCorteActualKey(tz) {
+  const now = new Date();
+  const y = parseInt(Utilities.formatDate(now, tz, "yyyy"), 10);
+  const m = parseInt(Utilities.formatDate(now, tz, "M"), 10) - 1;
+  const d = parseInt(Utilities.formatDate(now, tz, "d"), 10);
+  const cutoff = d <= PAYMENT_CUTOFF_DAY
+    ? crearFechaLocal(y, m, PAYMENT_CUTOFF_DAY)
+    : crearFechaLocal(y, m + 1, PAYMENT_CUTOFF_DAY);
+  return Utilities.formatDate(cutoff, tz, "yyyy-MM-dd");
+}
+
+function normalizarPeriodoIntereses(periodKey, tz) {
+  const key = String(periodKey || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return key;
+  if (/^\d{4}-\d{2}$/.test(key)) return key + "-06";
+  return fechaCorteActualKey(tz);
+}
+
+function obtenerPeriodoPagoKey(fecha, tz) {
+  const rowDateKey = Utilities.formatDate(fecha, tz, "yyyy-MM-dd");
+  if (rowDateKey <= FIRST_PAYMENT_CUTOFF_KEY) return FIRST_PAYMENT_CUTOFF_KEY;
+
+  const y = parseInt(Utilities.formatDate(fecha, tz, "yyyy"), 10);
+  const m = parseInt(Utilities.formatDate(fecha, tz, "M"), 10) - 1;
+  const d = parseInt(Utilities.formatDate(fecha, tz, "d"), 10);
+  const cutoff = d <= PAYMENT_CUTOFF_DAY
+    ? crearFechaLocal(y, m, PAYMENT_CUTOFF_DAY)
+    : crearFechaLocal(y, m + 1, PAYMENT_CUTOFF_DAY);
+  return Utilities.formatDate(cutoff, tz, "yyyy-MM-dd");
+}
+
+function formatearLabelPeriodo(periodKey) {
+  const parts = String(periodKey || "").split("-");
+  if (parts.length !== 3) return "ciclo actual";
+  return parts[2] + "/" + parts[1] + "/" + parts[0];
+}
+
+function calcularInteresesMesCapitales(ss, tz, periodKey) {
+  const catalog = obtenerCatalogoCapitales(ss);
+  const selectedPeriod = normalizarPeriodoIntereses(periodKey, tz);
+  const periodosMap = {};
+  periodosMap[selectedPeriod] = true;
+
+  const capitales = catalog.activeSheets.map((sheet) => {
+      const lastRow = sheet.getLastRow();
+      let usd = 0;
+      let eth = 0;
+      let operaciones = 0;
+
+      if (lastRow >= FIRST_DATA_ROW) {
+        const numRows = lastRow - FIRST_DATA_ROW + 1;
+        const values = sheet
+          .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, NUM_COLS)
+          .getValues();
+
+        values.forEach((row) => {
+          const fechaFin = row[1];
+          const monedaFinal = String(row[16] || "").trim();
+          if (!monedaFinal || !(fechaFin instanceof Date)) return;
+          const rowPeriod = obtenerPeriodoPagoKey(fechaFin, tz);
+          periodosMap[rowPeriod] = true;
+          if (rowPeriod !== selectedPeriod) return;
+
+          const moneda = String(row[4] || "").trim().toUpperCase();
+          const monto = toFiniteNumber(row[3]);
+          const apr = toFiniteNumber(row[5]);
+          const precio = toFiniteNumber(row[7]);
+          const tiempoDias = toFiniteNumber(row[12]);
+          const interesUsdSheet = toFiniteNumber(row[13]);
+          const fallbackUsd =
+            moneda === "USDT"
+              ? (monto * apr * tiempoDias) / 365
+              : (monto * apr * tiempoDias * precio) / 365;
+          const interesUsd = interesUsdSheet || fallbackUsd;
+
+          usd += interesUsd;
+          if (moneda === "ETH") {
+            eth += (monto * apr * tiempoDias) / 365;
+          }
+          operaciones += 1;
+        });
+      }
+
+      return {
+        capital: sheet.getName(),
+        usd,
+        eth,
+        operaciones,
+      };
+    });
+
+  const periodos = Object.keys(periodosMap)
+    .sort()
+    .reverse()
+    .map((key) => ({
+      key,
+      label: formatearLabelPeriodo(key),
+    }));
+
+  return {
+    selectedMonth: selectedPeriod,
+    label: formatearLabelPeriodo(selectedPeriod),
+    meses: periodos,
+    capitales,
+  };
+}
+
+function obtenerInteresesMesCapitales(mesIntereses) {
   try {
-    const { sheet } = getSheet(sheetName);
+    const ss = getSpreadsheet();
+    const tz = ss.getSpreadsheetTimeZone();
+    return {
+      success: true,
+      interesesMes: calcularInteresesMesCapitales(ss, tz, mesIntereses),
+    };
+  } catch (error) {
+    Logger.log("Error en obtenerInteresesMesCapitales: " + error);
+    return { success: false, message: error.toString() };
+  }
+}
+
+// Obtiene los datos de los cuadros de resumen de la hoja
+function obtenerResumen(sheetName, mesIntereses) {
+  try {
+    const { sheet, ss } = getSheet(sheetName);
+    const tz = ss.getSpreadsheetTimeZone();
     const isDefault = sheet.getName() === DEFAULT_SHEET_NAME;
     const fullRange = sheet.getRange("A1:J" + FIRST_DATA_ROW);
     const fullDisplay = fullRange.getDisplayValues();
@@ -694,6 +1035,7 @@ function obtenerResumen(sheetName) {
       notaB4,
       formulaB6,
       formulaB4,
+      interesesMes: calcularInteresesMesCapitales(ss, tz, mesIntereses),
     };
   } catch (error) {
     Logger.log("Error en obtenerResumen: " + error);
@@ -895,7 +1237,7 @@ function actualizarTipoCambioManual() {
   if (!resp.success || resp.mejor <= 0) return resp;
 
   const ss = getSpreadsheet();
-  ss.getSheets().filter(s => !s.isSheetHidden()).forEach(s => {
+  obtenerHojasCapitalActivas(ss).forEach(s => {
     const cell = s.getName() === DEFAULT_SHEET_NAME ? "F2" : "F7";
     s.getRange(cell).setValue(resp.mejor).setNumberFormat("0.000");
   });
