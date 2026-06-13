@@ -10,9 +10,17 @@
   const DEFAULT_SHEET_NAME = "CAPITAL 1";
   const ETH_PRICE_REFRESH_MS = 3000;
   const P2P_REFRESH_MS = 60000;
+  const GAS_BOOT_RETRY_MS = 80;
+  const GAS_BOOT_MAX_ATTEMPTS = 45;
   let ethPriceTimer = null;
   let ethPriceRequestInFlight = false;
   let p2pRequestInFlight = false;
+  let cargaInicialIniciada = false;
+  let resumenCargado = false;
+  let resumenRequestInFlight = false;
+  let resumenRequestSeq = 0;
+  let resumenUltimaClave = "";
+  let resumenRetryTimer = null;
 
   const FORMATO_NUMERO = new Intl.NumberFormat("es-ES", {
     minimumFractionDigits: 2,
@@ -77,8 +85,19 @@
     };
   };
 
-  // RAF utility para animaciones
-  const raf = (fn) => requestAnimationFrame(fn);
+  // RAF utility con fallback: evita que estados criticos queden pausados si la
+  // pagina carga en segundo plano o el navegador aplaza frames.
+  const raf = (fn) => {
+    let ejecutado = false;
+    const ejecutar = () => {
+      if (ejecutado) return;
+      ejecutado = true;
+      fn();
+    };
+    const frameId = requestAnimationFrame(ejecutar);
+    setTimeout(ejecutar, 120);
+    return frameId;
+  };
   const $ = (id) => DOM[id] || document.getElementById(id);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const refreshIcons = () => {
@@ -103,6 +122,77 @@
         <div class="skeleton skeleton-row"></div>
       </div>
     `;
+  }
+
+  function mostrarSkeletonsIniciales() {
+    if (DOM.activasContainer) DOM.activasContainer.innerHTML = skeletonTabla(4);
+    if (DOM.historialContainer) DOM.historialContainer.innerHTML = skeletonTabla(4);
+    if (DOM.resumenContainer) {
+      DOM.resumenContainer.classList.remove("show");
+      DOM.resumenContainer.innerHTML = skeletonResumen();
+    }
+  }
+
+  function esperarGASDisponible(onReady, intento) {
+    if (isGASAvailable()) {
+      onReady();
+      return;
+    }
+
+    const intentoActual = intento || 0;
+    if (intentoActual >= GAS_BOOT_MAX_ATTEMPTS) {
+      mostrarErrorCarga("No se pudo conectar con Google Apps Script");
+      renderizarErrorResumen("No se pudo conectar con Google Apps Script");
+      return;
+    }
+
+    setTimeout(
+      () => esperarGASDisponible(onReady, intentoActual + 1),
+      GAS_BOOT_RETRY_MS,
+    );
+  }
+
+  function iniciarCargaInicialDashboard() {
+    if (cargaInicialIniciada) return;
+    cargaInicialIniciada = true;
+    mostrarSkeletonsIniciales();
+
+    esperarGASDisponible(function () {
+      cargarOperaciones(true);
+      cargarResumen(true, { force: true });
+      cargarPrecioETH();
+      setTimeout(actualizarTablaP2P, 2000);
+    });
+  }
+
+  function claveResumenActual() {
+    return [currentSheet || DEFAULT_SHEET_NAME, selectedInterestMonth || ""].join("|");
+  }
+
+  function programarVerificacionResumen() {
+    clearTimeout(resumenRetryTimer);
+    resumenRetryTimer = setTimeout(function () {
+      if (!resumenCargado && !resumenRequestInFlight && isGASAvailable()) {
+        cargarResumen(true, { force: true });
+      }
+    }, 4500);
+  }
+
+  function renderizarErrorResumen(mensaje) {
+    if (!DOM.resumenContainer) return;
+    resumenCargado = false;
+    DOM.resumenContainer.classList.add("show");
+    DOM.resumenContainer.innerHTML = `
+      <div class="error-state">
+        <i data-lucide="alert-triangle" class="error-state-icon" style="width:48px; height:48px;"></i>
+        <h3>Resumen no disponible</h3>
+        <p>${sanitize(mensaje || "No se pudo cargar el resumen financiero")}</p>
+        <button onclick="cargarResumen(false, { force: true })" class="btn btn-primary" style="margin-top:4px;">
+          <i data-lucide="rotate-cw" style="width:16px; height:16px;"></i> Reintentar
+        </button>
+      </div>
+    `;
+    refreshIcons();
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -221,13 +311,24 @@
       });
     }
 
-    // Pequeño retardo para que google.script.run esté disponible
-    setTimeout(function () {
-      cargarOperaciones();
-      cargarResumen();
-      cargarPrecioETH();
-      setTimeout(actualizarTablaP2P, 2000);
-    }, 100);
+    // Carga inicial coordinada para evitar carreras entre capitales y resumen.
+    iniciarCargaInicialDashboard();
+
+    document.addEventListener("visibilitychange", function () {
+      if (
+        document.visibilityState === "visible" &&
+        !resumenCargado &&
+        !resumenRequestInFlight
+      ) {
+        cargarResumen(true, { force: true });
+      }
+    });
+
+    window.addEventListener("pageshow", function () {
+      if (!resumenCargado && !resumenRequestInFlight) {
+        cargarResumen(true, { force: true });
+      }
+    });
 
     ethPriceTimer = setInterval(
       () => cargarPrecioETH(true),
@@ -711,7 +812,7 @@
           } else {
             cargarOperaciones(true);
           }
-          cargarResumen(true);
+          cargarResumen(true, { force: true });
         } else {
           showAlert("error", extraerMensaje(response, "Error en el servidor"));
           cargarOperaciones(true); // Recargar por si acaso para quitar la fila pendiente
@@ -751,7 +852,7 @@
   // ============================================
   function refrescarTodo(silent) {
     cargarOperaciones(silent);
-    cargarResumen(silent);
+    cargarResumen(silent, { force: true });
     cargarPrecioETH(true);
   }
 
@@ -889,7 +990,7 @@
         renderizarActivas(response.activas || []);
         renderizarHistorial(newCompletadas, oldCompletadasLen);
       });
-      if (sheetCambiada) cargarResumen(true);
+      if (sheetCambiada) cargarResumen(true, { force: true });
     } else {
       showAlert(
         "error",
@@ -898,15 +999,28 @@
     }
   }
 
-  function cargarResumen(silent) {
+  function cargarResumen(silent, options = {}) {
     console.log("Cargando resumen...");
     if (!isGASAvailable()) {
       if (DOM.resumenContainer) {
-        DOM.resumenContainer.innerHTML =
-          '<p class="error-text">No se pudo conectar con Google Apps Script</p>';
+        renderizarErrorResumen("No se pudo conectar con Google Apps Script");
       }
       return;
     }
+
+    const clave = claveResumenActual();
+    if (
+      resumenRequestInFlight &&
+      resumenUltimaClave === clave &&
+      !options.force
+    ) {
+      return;
+    }
+
+    const requestId = ++resumenRequestSeq;
+    resumenRequestInFlight = true;
+    resumenUltimaClave = clave;
+    if (!silent) resumenCargado = false;
 
     if (!silent) {
       raf(() => {
@@ -914,11 +1028,26 @@
       });
     }
 
+    programarVerificacionResumen();
+
     google.script.run
       .withSuccessHandler(function (resumen) {
+        if (requestId !== resumenRequestSeq) return;
+        resumenRequestInFlight = false;
+        if (!resumen?.success) {
+          renderizarErrorResumen(
+            extraerMensaje(resumen, "No se pudo cargar el resumen financiero"),
+          );
+          return;
+        }
         renderizarResumen(resumen);
       })
       .withFailureHandler(function (error) {
+        if (requestId !== resumenRequestSeq) return;
+        resumenRequestInFlight = false;
+        renderizarErrorResumen(
+          extraerMensaje(error, "No se pudo cargar el resumen financiero"),
+        );
         showAlert("error", "Error al cargar resumen: " + error);
       })
       .obtenerResumen(currentSheet, selectedInterestMonth);
@@ -1805,6 +1934,15 @@
   function renderizarResumen(data) {
     console.log("Renderizando resumen...");
     if (!DOM.resumenContainer) return;
+    if (!data?.success) {
+      renderizarErrorResumen(
+        extraerMensaje(data, "No se pudo cargar el resumen financiero"),
+      );
+      return;
+    }
+    resumenCargado = true;
+    resumenRequestInFlight = false;
+    clearTimeout(resumenRetryTimer);
     DOM.resumenContainer.classList.remove("show");
 
     function buildCard(title, rows, options = {}) {
@@ -2376,7 +2514,7 @@
     currentSheet = name;
     actualizarSelectorCapital(name);
     cargarHistorial(false);
-    cargarResumen(false);
+    cargarResumen(false, { force: true });
   }
 
   function aplicarRespuestaCatalogo(resp) {
@@ -2677,7 +2815,7 @@
           overlay.remove();
           if (res && res.success) {
             showAlert("success", "Actualizado correctamente");
-            cargarResumen();
+            cargarResumen(false, { force: true });
           } else {
             showAlert("error", "Error al guardar");
           }
