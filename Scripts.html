@@ -574,7 +574,10 @@
     const selectedText = document.getElementById("cexSelectedText");
     const options = document.querySelectorAll(".custom-option");
 
-    if (select) select.value = valor;
+    if (select) {
+      select.value = valor;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
 
     if (selectedText) {
       if (valor) {
@@ -803,6 +806,7 @@
       resetCustomFechaFin();
       DOM.capitalOperacion.disabled = false;
       DOM.capitalOperacion.value = currentSheet;
+      seleccionarCEX("OKX");
       if (DOM.btnCancelar) DOM.btnCancelar.style.display = "none";
       DOM.btnGuardar?.classList.remove("btn-warning");
       setFechaHoraActual();
@@ -3655,6 +3659,7 @@
     if (!window.editandoFila && DOM.capitalOperacion) {
       DOM.capitalOperacion.disabled = false;
       DOM.capitalOperacion.value = currentSheet;
+      if (!DOM.cex?.value) seleccionarCEX("OKX");
     }
     const modal = document.getElementById("modalFormulario");
     if (modal) {
