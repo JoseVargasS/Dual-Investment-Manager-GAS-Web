@@ -21,6 +21,8 @@
   let resumenRequestSeq = 0;
   let resumenUltimaClave = "";
   let resumenRetryTimer = null;
+  let evolucionCapitalData = null;
+  let evolucionCapitalRango = "max";
 
   const FORMATO_NUMERO = new Intl.NumberFormat("es-ES", {
     minimumFractionDigits: 2,
@@ -42,6 +44,8 @@
       "formOperacion",
       "capitalOperacion",
       "modalDetalle",
+      "modalEvolucionCapital",
+      "capitalChartContent",
       "activasContainer",
       "historialContainer",
       "resumenContainer",
@@ -249,6 +253,12 @@
       });
     }
 
+    if (DOM.modalEvolucionCapital) {
+      DOM.modalEvolucionCapital.addEventListener("click", function (e) {
+        if (e.target === this) cerrarModalEvolucionCapital();
+      });
+    }
+
     // Cerrar cualquier dropdown abierto al hacer click fuera
     document.addEventListener("click", function (e) {
       $$(".custom-options.show, #capitalOptions.show").forEach(function (opts) {
@@ -284,6 +294,9 @@
         }
         if ($("modalDetalle")?.classList.contains("active")) {
           cerrarModal();
+        }
+        if ($("modalEvolucionCapital")?.classList.contains("active")) {
+          cerrarModalEvolucionCapital();
         }
         if ($("modalCapital")?.classList.contains("show")) {
           cerrarModalCapitalDirecto();
@@ -1926,6 +1939,356 @@
   function cerrarModal() {
     const modal = document.getElementById("modalDetalle");
     if (modal) modal.classList.remove("active");
+  }
+
+  // ============================================
+  // GRAFICA DE EVOLUCION DEL CAPITAL
+  // ============================================
+  function abrirGraficaCapital() {
+    const modal = $("modalEvolucionCapital");
+    const content = $("capitalChartContent");
+    const sheetName = $("vistaCapitalSelect")?.value || currentSheet || DEFAULT_SHEET_NAME;
+    if (!modal || !content) return;
+
+    modal.classList.add("active");
+    document.body.style.overflow = "hidden";
+    content.innerHTML = skeletonResumen();
+    refreshIcons();
+
+    if (!isGASAvailable()) {
+      renderizarErrorGraficaCapital("No se pudo conectar con Google Apps Script");
+      return;
+    }
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (resp?.success) {
+          evolucionCapitalData = resp;
+          evolucionCapitalRango = "max";
+          renderizarGraficaCapital(resp);
+        } else {
+          renderizarErrorGraficaCapital(
+            extraerMensaje(resp, "No se pudo cargar la evolucion del capital"),
+          );
+        }
+      })
+      .withFailureHandler(function (error) {
+        renderizarErrorGraficaCapital(
+          extraerMensaje(error, "No se pudo cargar la evolucion del capital"),
+        );
+      })
+      .obtenerEvolucionCapitalUSDT(sheetName);
+  }
+
+  function cambiarRangoGraficaCapital(rango) {
+    evolucionCapitalRango = rango || "max";
+    if (evolucionCapitalData) renderizarGraficaCapital(evolucionCapitalData);
+  }
+
+  function cerrarModalEvolucionCapital() {
+    const modal = $("modalEvolucionCapital");
+    if (modal) modal.classList.remove("active");
+    document.body.style.overflow = "";
+  }
+
+  function renderizarErrorGraficaCapital(mensaje) {
+    const content = $("capitalChartContent");
+    if (!content) return;
+    content.innerHTML = `
+      <div class="capital-chart-empty">
+        <i data-lucide="chart-no-axes-combined"></i>
+        <h3>Grafica no disponible</h3>
+        <p>${sanitize(mensaje || "No hay datos suficientes para graficar este capital")}</p>
+      </div>`;
+    refreshIcons();
+  }
+
+  function parseFechaGrafica(fecha) {
+    if (!fecha) return null;
+    const d = new Date(String(fecha).replace(/-/g, "/"));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function formatearFechaGrafica(fecha) {
+    const d = parseFechaGrafica(fecha);
+    if (!d) return "-";
+    return d.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+  }
+
+  function formatearFechaTooltip(fecha) {
+    const d = parseFechaGrafica(fecha);
+    if (!d) return "-";
+    return d.toLocaleString("es-ES", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function formatearUSDT(valor) {
+    return FORMATO_USD.format(Number(valor) || 0) + " USDT";
+  }
+
+  function construirPathSuave(coords) {
+    if (!coords.length) return "";
+    if (coords.length === 1) return `M ${coords[0].x} ${coords[0].y}`;
+    let d = `M ${coords[0].x} ${coords[0].y}`;
+    for (let i = 0; i < coords.length - 1; i++) {
+      const p0 = coords[i - 1] || coords[i];
+      const p1 = coords[i];
+      const p2 = coords[i + 1];
+      const p3 = coords[i + 2] || p2;
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+    }
+    return d;
+  }
+
+  function filtrarPuntosGraficaCapital(puntos, rango) {
+    if (!Array.isArray(puntos) || puntos.length <= 2 || rango === "max") {
+      return puntos || [];
+    }
+
+    const diasPorRango = { "1m": 30, "3m": 90, "6m": 180 };
+    const dias = diasPorRango[rango];
+    if (!dias) return puntos;
+
+    const maxTime = Math.max(...puntos.map((p) => p.fechaObj.getTime()));
+    const minTime = maxTime - dias * 86400000;
+    const filtrados = puntos.filter((p) => p.fechaObj.getTime() >= minTime);
+
+    if (filtrados.length >= 2) return filtrados;
+    return puntos.slice(Math.max(0, puntos.length - 2));
+  }
+
+  function calcularResumenGraficaCapital(puntos) {
+    const inicio = puntos[0]?.valor || 0;
+    const actual = puntos[puntos.length - 1]?.valor || 0;
+    const maximo = puntos.reduce((max, p) => Math.max(max, Number(p.valor) || 0), 0);
+    const minimo = puntos.reduce(
+      (min, p) => Math.min(min, Number(p.valor) || 0),
+      puntos[0]?.valor || 0,
+    );
+    return {
+      inicio,
+      actual,
+      maximo,
+      minimo,
+      cambio: actual - inicio,
+      cambioPct: inicio ? ((actual - inicio) / inicio) * 100 : 0,
+    };
+  }
+
+  function buildRangoGraficaButtons() {
+    const opciones = [
+      ["1m", "1M"],
+      ["3m", "3M"],
+      ["6m", "6M"],
+      ["max", "Max"],
+    ];
+    return opciones
+      .map(([key, label]) => {
+        const active = key === evolucionCapitalRango ? " active" : "";
+        return `<button type="button" class="capital-chart-range-btn${active}" onclick="cambiarRangoGraficaCapital('${key}')">${label}</button>`;
+      })
+      .join("");
+  }
+
+  function renderizarGraficaCapital(resp) {
+    const content = $("capitalChartContent");
+    if (!content) return;
+
+    const todosLosPuntos = (resp.puntos || [])
+      .map((p) => ({
+        ...p,
+        fechaObj: parseFechaGrafica(p.fecha),
+        valor: Number(p.valor) || 0,
+      }))
+      .filter((p) => p.fechaObj && isFinite(p.valor));
+
+    if (!todosLosPuntos.length) {
+      renderizarErrorGraficaCapital(resp.message || "No hay operaciones para graficar");
+      return;
+    }
+
+    const puntosFiltrados = filtrarPuntosGraficaCapital(
+      todosLosPuntos,
+      evolucionCapitalRango,
+    );
+    const puntos = puntosFiltrados.length ? puntosFiltrados : todosLosPuntos;
+
+    const isCompactChart = window.matchMedia?.("(max-width: 560px)").matches;
+    const width = isCompactChart ? 640 : 920;
+    const height = isCompactChart ? 540 : 420;
+    const pad = isCompactChart
+      ? { top: 22, right: 18, bottom: 44, left: 32 }
+      : { top: 30, right: 28, bottom: 58, left: 74 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const minTime = Math.min(...puntos.map((p) => p.fechaObj.getTime()));
+    const maxTime = Math.max(...puntos.map((p) => p.fechaObj.getTime()));
+    const minValorRaw = Math.min(...puntos.map((p) => p.valor));
+    const maxValorRaw = Math.max(...puntos.map((p) => p.valor));
+    const rangoValor = Math.max(1, maxValorRaw - minValorRaw);
+    const minValor = Math.max(0, minValorRaw - rangoValor * 0.16);
+    const maxValor = maxValorRaw + rangoValor * 0.18;
+    const timeRange = Math.max(1, maxTime - minTime);
+    const valueRange = Math.max(1, maxValor - minValor);
+
+    const coords = puntos.map((p) => ({
+      ...p,
+      x: pad.left + ((p.fechaObj.getTime() - minTime) / timeRange) * plotW,
+      y: pad.top + (1 - (p.valor - minValor) / valueRange) * plotH,
+    }));
+
+    const linePath = construirPathSuave(coords);
+    const areaPath = `${linePath} L ${coords[coords.length - 1].x} ${pad.top + plotH} L ${coords[0].x} ${pad.top + plotH} Z`;
+    const yTicks = Array.from({ length: 5 }, (_, i) => {
+      const ratio = i / 4;
+      const y = pad.top + plotH - ratio * plotH;
+      const value = minValor + ratio * valueRange;
+      return { y, value };
+    });
+    const xTicks = coords.length === 1
+      ? [coords[0]]
+      : Array.from({ length: Math.min(5, coords.length) }, (_, i) => {
+          const idx = Math.round((i / (Math.min(5, coords.length) - 1)) * (coords.length - 1));
+          return coords[idx];
+        });
+
+    const resumen = calcularResumenGraficaCapital(puntos);
+    const actual = Number(resumen.actual ?? puntos[puntos.length - 1].valor) || 0;
+    const cambio = Number(resumen.cambio || 0);
+    const cambioPct = Number(resumen.cambioPct || 0);
+    const cambioClass = cambio >= 0 ? "positive" : "negative";
+    const sheetName = resp.sheetName || currentSheet;
+
+    content.innerHTML = `
+      <div class="capital-chart-shell">
+        <div class="capital-chart-topline">
+          <div>
+            <span class="capital-chart-kicker">${sanitize(sheetName)}</span>
+            <h4>Evolucion en USDT</h4>
+          </div>
+          <div class="capital-chart-current">
+            <strong>${formatearUSDT(actual)}</strong>
+            <span class="${cambioClass}">${cambio >= 0 ? "+" : ""}${formatearUSDT(cambio)} | ${cambioPct >= 0 ? "+" : ""}${cambioPct.toFixed(2)}%</span>
+          </div>
+        </div>
+        <div class="capital-chart-range" aria-label="Rango de tiempo">
+          ${buildRangoGraficaButtons()}
+        </div>
+        <div id="capitalChartTooltip" class="capital-chart-tooltip"></div>
+        <div class="capital-chart-plot">
+          <svg id="capitalEvolutionSvg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Grafica de evolucion temporal en USDT">
+            <defs>
+              <linearGradient id="capitalLineGradient" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stop-color="#93c5fd" />
+                <stop offset="52%" stop-color="#00ff94" />
+                <stop offset="100%" stop-color="#f5d061" />
+              </linearGradient>
+              <linearGradient id="capitalAreaGradient" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stop-color="#00ff94" stop-opacity="0.34" />
+                <stop offset="62%" stop-color="#60a5fa" stop-opacity="0.12" />
+                <stop offset="100%" stop-color="#00ff94" stop-opacity="0" />
+              </linearGradient>
+              <filter id="capitalGlow" x="-30%" y="-30%" width="160%" height="160%">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            <rect x="0" y="0" width="${width}" height="${height}" class="chart-bg-rect" rx="20"></rect>
+            ${yTicks
+              .map(
+                (tick) => `
+                  <line class="capital-chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${tick.y}" y2="${tick.y}"></line>
+                  <text class="capital-chart-axis y" x="${pad.left - 12}" y="${tick.y + 5}" text-anchor="end">${FORMATO_USD.format(tick.value)}</text>
+                `,
+              )
+              .join("")}
+            ${xTicks
+              .map(
+                (tick) => `<text class="capital-chart-axis x" x="${tick.x}" y="${height - 18}" text-anchor="middle">${sanitize(formatearFechaGrafica(tick.fecha))}</text>`,
+              )
+              .join("")}
+            <path class="capital-chart-area" d="${areaPath}"></path>
+            <path class="capital-chart-line" d="${linePath}" filter="url(#capitalGlow)"></path>
+            ${coords
+              .map(
+                (p) => `<circle class="capital-chart-point" cx="${p.x}" cy="${p.y}" r="4"></circle>`,
+              )
+              .join("")}
+            <line id="capitalChartHoverLine" class="capital-chart-hover-line" x1="${coords[0].x}" x2="${coords[0].x}" y1="${pad.top}" y2="${pad.top + plotH}"></line>
+            <circle id="capitalChartHoverDot" class="capital-chart-hover-dot" cx="${coords[0].x}" cy="${coords[0].y}" r="6"></circle>
+            <rect id="capitalChartHoverZone" x="${pad.left}" y="${pad.top}" width="${plotW}" height="${plotH}" fill="transparent"></rect>
+          </svg>
+        </div>
+        <div class="capital-chart-metrics">
+          <span><small>Inicio</small>${formatearUSDT(resumen.inicio)}</span>
+          <span><small>Maximo</small>${formatearUSDT(resumen.maximo)}</span>
+          <span><small>Puntos</small>${puntos.length} de ${todosLosPuntos.length}</span>
+          <span><small>Periodo</small>${formatearFechaGrafica(puntos[0].fecha)} - ${formatearFechaGrafica(puntos[puntos.length - 1].fecha)}</span>
+        </div>
+      </div>`;
+
+    activarHoverGraficaCapital(coords, width, height);
+  }
+
+  function renderizarTooltipGraficaCapital(tooltip, punto) {
+    if (!tooltip || !punto) return;
+    tooltip.innerHTML = `
+      <strong>${formatearUSDT(punto.valor)}</strong>
+      <span>${sanitize(formatearFechaTooltip(punto.fecha))}</span>
+      <em>${sanitize(punto.tipo || "Punto")}</em>
+    `;
+  }
+
+  function activarHoverGraficaCapital(coords, viewWidth, viewHeight) {
+    const svg = $("capitalEvolutionSvg");
+    const zone = $("capitalChartHoverZone");
+    const line = $("capitalChartHoverLine");
+    const dot = $("capitalChartHoverDot");
+    const tooltip = $("capitalChartTooltip");
+    if (!svg || !zone || !line || !dot || !tooltip || !coords.length) return;
+    renderizarTooltipGraficaCapital(tooltip, coords[coords.length - 1]);
+    tooltip.classList.add("active");
+
+    const mostrarPunto = (event) => {
+      const rect = svg.getBoundingClientRect();
+      const clientX = event.touches?.[0]?.clientX || event.clientX;
+      const svgX = ((clientX - rect.left) / rect.width) * viewWidth;
+      const nearest = coords.reduce((best, p) =>
+        Math.abs(p.x - svgX) < Math.abs(best.x - svgX) ? p : best,
+      );
+
+      line.setAttribute("x1", nearest.x);
+      line.setAttribute("x2", nearest.x);
+      dot.setAttribute("cx", nearest.x);
+      dot.setAttribute("cy", nearest.y);
+      line.classList.add("active");
+      dot.classList.add("active");
+      tooltip.classList.add("active");
+      renderizarTooltipGraficaCapital(tooltip, nearest);
+    };
+
+    const ocultarPunto = () => {
+      line.classList.remove("active");
+      dot.classList.remove("active");
+    };
+
+    zone.addEventListener("pointerdown", mostrarPunto);
+    zone.addEventListener("pointermove", mostrarPunto);
+    zone.addEventListener("pointerleave", ocultarPunto);
+    zone.addEventListener("touchstart", mostrarPunto, { passive: true });
+    zone.addEventListener("touchmove", mostrarPunto, { passive: true });
   }
 
   // ============================================

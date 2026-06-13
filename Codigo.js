@@ -960,6 +960,153 @@ function obtenerInteresesMesCapitales(mesIntereses) {
   }
 }
 
+function valorOperacionInicialUSDT(row) {
+  const monto = toFiniteNumber(row[3]);
+  const moneda = String(row[4] || "USDT").trim().toUpperCase();
+  const precio = toFiniteNumber(row[7]);
+  return moneda === "USDT" ? monto : monto * precio;
+}
+
+function valorOperacionFinalUSDT(row) {
+  const precio = toFiniteNumber(row[7]);
+  const totalCalculado = toFiniteNumber(row[14]);
+  const finalValor = toFiniteNumber(row[15]);
+  const monedaFinal = String(row[16] || "").trim().toUpperCase();
+
+  if (finalValor > 0 && monedaFinal) {
+    return monedaFinal === "USDT" ? finalValor : finalValor * precio;
+  }
+
+  return totalCalculado;
+}
+
+function valorOperacionActualUSDT(row, hoy) {
+  const fechaInicio = row[0];
+  if (!(fechaInicio instanceof Date) || isNaN(fechaInicio.getTime())) return 0;
+
+  const monto = toFiniteNumber(row[3]);
+  const moneda = String(row[4] || "USDT").trim().toUpperCase();
+  const apr = toFiniteNumber(row[5]);
+  const precio = toFiniteNumber(row[7]);
+  const base = valorOperacionInicialUSDT(row);
+  const fechaFin = row[1] instanceof Date && !isNaN(row[1].getTime()) ? row[1] : hoy;
+  const limite = fechaFin.getTime() > hoy.getTime() ? hoy : fechaFin;
+  const dias = Math.max(0, (limite.getTime() - fechaInicio.getTime()) / 86400000);
+  const interes =
+    moneda === "USDT"
+      ? (monto * apr * dias) / 365
+      : (monto * apr * dias * precio) / 365;
+
+  return base + interes;
+}
+
+function normalizarPuntoEvolucion(fecha, valor, tipo, tz) {
+  return {
+    fecha: Utilities.formatDate(fecha, tz, "yyyy-MM-dd HH:mm:ss"),
+    ts: fecha.getTime(),
+    valor: Math.round((Number(valor) || 0) * 100) / 100,
+    tipo,
+  };
+}
+
+function obtenerEvolucionCapitalUSDT(sheetName) {
+  try {
+    const { sheet, ss } = getSheet(sheetName);
+    const tz = ss.getSpreadsheetTimeZone();
+    const actualSheetName = sheet.getName();
+    const lastRow = sheet.getLastRow();
+    const hoy = new Date();
+
+    if (lastRow < FIRST_DATA_ROW) {
+      return {
+        success: true,
+        sheetName: actualSheetName,
+        puntos: [],
+        message: "No hay operaciones para graficar",
+      };
+    }
+
+    const numRows = lastRow - FIRST_DATA_ROW + 1;
+    const values = sheet
+      .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, NUM_COLS)
+      .getValues();
+    const rows = values
+      .filter((row) => row[0] instanceof Date && !isNaN(row[0].getTime()))
+      .sort((a, b) => a[0].getTime() - b[0].getTime());
+
+    if (!rows.length) {
+      return {
+        success: true,
+        sheetName: actualSheetName,
+        puntos: [],
+        message: "No hay operaciones para graficar",
+      };
+    }
+
+    const puntos = [];
+    const primera = rows[0];
+    puntos.push(
+      normalizarPuntoEvolucion(
+        primera[0],
+        valorOperacionInicialUSDT(primera),
+        "Inicio",
+        tz,
+      ),
+    );
+
+    let valorActual = puntos[0].valor;
+    rows.forEach((row) => {
+      const fechaInicio = row[0];
+      const fechaFin = row[1];
+      const monedaFinal = String(row[16] || "").trim();
+      let fechaPunto = fechaFin instanceof Date && !isNaN(fechaFin.getTime()) ? fechaFin : fechaInicio;
+      let tipo = monedaFinal ? "Cierre" : "Actual";
+      let valor = monedaFinal ? valorOperacionFinalUSDT(row) : valorOperacionActualUSDT(row, hoy);
+
+      if (!monedaFinal && fechaPunto.getTime() > hoy.getTime()) {
+        fechaPunto = hoy;
+      }
+
+      if (!valor || !isFinite(valor)) return;
+      valorActual = valor;
+      puntos.push(normalizarPuntoEvolucion(fechaPunto, valor, tipo, tz));
+    });
+
+    puntos.sort((a, b) => a.ts - b.ts);
+
+    const hoyKey = Utilities.formatDate(hoy, tz, "yyyy-MM-dd");
+    const ultimo = puntos[puntos.length - 1];
+    if (ultimo && String(ultimo.fecha).slice(0, 10) < hoyKey) {
+      puntos.push(normalizarPuntoEvolucion(hoy, valorActual, "Actualidad", tz));
+    }
+
+    const inicio = puntos[0]?.valor || 0;
+    const actual = puntos[puntos.length - 1]?.valor || 0;
+    const maximo = puntos.reduce((max, p) => Math.max(max, Number(p.valor) || 0), 0);
+    const minimo = puntos.reduce(
+      (min, p) => Math.min(min, Number(p.valor) || 0),
+      puntos[0]?.valor || 0,
+    );
+
+    return {
+      success: true,
+      sheetName: actualSheetName,
+      puntos,
+      resumen: {
+        inicio,
+        actual,
+        maximo,
+        minimo,
+        cambio: actual - inicio,
+        cambioPct: inicio ? ((actual - inicio) / inicio) * 100 : 0,
+      },
+    };
+  } catch (error) {
+    Logger.log("Error en obtenerEvolucionCapitalUSDT: " + error);
+    return { success: false, message: error.toString() };
+  }
+}
+
 // Obtiene los datos de los cuadros de resumen de la hoja
 function obtenerResumen(sheetName, mesIntereses) {
   try {

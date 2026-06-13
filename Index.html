@@ -97,6 +97,16 @@
             >
               <option value="">Cargando...</option>
             </select>
+            <button
+              type="button"
+              id="btnGraficaCapital"
+              class="btn-chart-capital"
+              onclick="abrirGraficaCapital()"
+              title="Ver evolucion temporal en USDT"
+              aria-label="Ver evolucion temporal en USDT"
+            >
+              <i data-lucide="chart-no-axes-combined"></i>
+            </button>
             <span id="countHistorial" class="count-badge">—</span>
           </h2>
           <div class="capital-management-toolbar">
@@ -164,6 +174,35 @@
       </div>
     </div>
     <!-- /container -->
+
+    <!-- Modal Evolucion Capital -->
+    <div id="modalEvolucionCapital" class="modal-overlay chart-modal-overlay">
+      <div class="modal modal-chart">
+        <div class="modal-header chart-modal-header">
+          <h3 class="modal-title">
+            <i data-lucide="chart-no-axes-combined"></i>
+            Evolucion temporal
+          </h3>
+          <button
+            class="modal-close"
+            onclick="cerrarModalEvolucionCapital()"
+            aria-label="Cerrar"
+          >
+            Ã—
+          </button>
+        </div>
+        <div class="modal-body chart-modal-body">
+          <div id="capitalChartContent" class="capital-chart-content">
+            <div class="skeleton-summary" aria-hidden="true">
+              <div class="skeleton skeleton-text"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+              <div class="skeleton skeleton-row"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Modal Detalle -->
     <div id="modalDetalle" class="modal-overlay">
