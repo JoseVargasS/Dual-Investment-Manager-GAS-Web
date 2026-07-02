@@ -129,20 +129,20 @@ function leerOperacionesDesdeSheet(sheet, tz) {
       fila: FIRST_DATA_ROW + i,
       sheetName,
       capital: sheetName,
-      fechaInicio: serCell(row[0], sheetName, tz),
-      fechaFin: serCell(row[1], sheetName, tz),
-      cex: serCell(row[2], sheetName, tz),
-      monto: serCell(row[3], sheetName, tz),
-      moneda: serCell(row[4], sheetName, tz),
+      fechaInicio: serCell(row[0], tz),
+      fechaFin: serCell(row[1], tz),
+      cex: serCell(row[2], tz),
+      monto: serCell(row[3], tz),
+      moneda: serCell(row[4], tz),
       apr: fmtPct(row[5]),
-      tipoOperacion: serCell(row[6], sheetName, tz),
-      precioObjetivo: serCell(row[7], sheetName, tz),
+      tipoOperacion: serCell(row[6], tz),
+      precioObjetivo: serCell(row[7], tz),
       tiempoCex: tStr,
-      tiempoDias: serCell(row[12], sheetName, tz),
-      interes: serCell(row[13], sheetName, tz),
-      total: serCell(row[14], sheetName, tz),
-      final: serCell(row[15], sheetName, tz),
-      monedaFinal: serCell(row[16], sheetName, tz),
+      tiempoDias: serCell(row[12], tz),
+      interes: serCell(row[13], tz),
+      total: serCell(row[14], tz),
+      final: serCell(row[15], tz),
+      monedaFinal: serCell(row[16], tz),
       aprAcum: fmtPct(row[17]),
       aprEfectivo: fmtPct(row[18]),
     };
@@ -561,21 +561,11 @@ function encontrarPrimeraFilaVacia(sheet) {
 // HELPER: Serializar valor para JSON
 // ============================================
 // Convierte valores de celda a tipos JSON válidos (Date → string)
-function serCell(val, sheetName, tz) {
+function serCell(val, tz) {
   if (val === null || val === undefined) return null;
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
-    if (tz) return Utilities.formatDate(val, tz, "yyyy-MM-dd HH:mm:ss");
-    try {
-      const { ss } = getSheet(sheetName);
-      return Utilities.formatDate(
-        val,
-        ss.getSpreadsheetTimeZone(),
-        "yyyy-MM-dd HH:mm:ss",
-      );
-    } catch (e) {
-      return Utilities.formatDate(val, "GMT-5", "yyyy-MM-dd HH:mm:ss");
-    }
+    return Utilities.formatDate(val, tz, "yyyy-MM-dd HH:mm:ss");
   }
   if (typeof val === "number") return isNaN(val) || !isFinite(val) ? null : val;
   if (typeof val === "boolean") return val;
@@ -621,9 +611,8 @@ function agregarOperacion(datos, sheetName) {
 
     sheet.getRange(r, 13, 1, rowValues.length).setValues([rowValues]);
 
-    aplicarFormatoEstructuraCapital(sheet, false);
+    // Formato solo de la fila (sin re-aplicar estructura completa del sheet)
     aplicarFormatoFilaOperacion(sheet, r, datos.moneda);
-    sheet.getRange(r, COL.MONEDA).setValue(datos.moneda);
 
     return {
       success: true,
@@ -644,78 +633,8 @@ function obtenerOperaciones(sheetName) {
   try {
     const { sheet, ss } = getSheet(sheetName);
     const tz = ss.getSpreadsheetTimeZone();
-    const actualSheetName = sheet.getName();
-    const lastRow = sheet.getLastRow();
-
-    Logger.log(
-      "obtenerOperaciones: lastRow=" +
-      lastRow +
-      ", FIRST_DATA_ROW=" +
-      FIRST_DATA_ROW,
-    );
-
-    if (lastRow < FIRST_DATA_ROW)
-      return { success: true, activas: [], completadas: [] };
-
-    // Leer todas las filas con datos
-    const numRows = lastRow - FIRST_DATA_ROW + 1;
-    const values = sheet
-      .getRange(FIRST_DATA_ROW, COL.FECHA_INICIO, numRows, NUM_COLS)
-      .getValues();
-
-    const activas = [];
-    const completadas = [];
-
-    // Procesar cada fila
-    for (let i = 0; i < values.length; i++) {
-      const row = values[i];
-      const fechaVal = row[0];
-      if (!fechaVal || fechaVal.toString().trim() === "") continue;
-
-      // Calcular tiempo formateado
-      const daysInt = Math.round(parseFloat(row[8])) || 0;
-      const hrsInt = Math.round(parseFloat(row[10])) || 0;
-      let tStr = "";
-      if (daysInt > 0) tStr += daysInt + (daysInt === 1 ? " día " : " días ");
-      if (hrsInt > 0 || (daysInt === 0 && hrsInt === 0))
-        tStr += hrsInt + (hrsInt === 1 ? " hora" : " horas");
-
-      // Crear objeto operación con los datos de la fila
-      const operacion = {
-        fila: FIRST_DATA_ROW + i,
-        sheetName: actualSheetName,
-        capital: actualSheetName,
-        fechaInicio: serCell(row[0], sheetName, tz),
-        fechaFin: serCell(row[1], sheetName, tz),
-        cex: serCell(row[2], sheetName, tz),
-        monto: serCell(row[3], sheetName, tz),
-        moneda: serCell(row[4], sheetName, tz),
-        apr: fmtPct(row[5]),
-        tipoOperacion: serCell(row[6], sheetName, tz),
-        precioObjetivo: serCell(row[7], sheetName, tz),
-        tiempoCex: tStr,
-        tiempoDias: serCell(row[12], sheetName, tz),
-        interes: serCell(row[13], sheetName, tz),
-        total: serCell(row[14], sheetName, tz),
-        final: serCell(row[15], sheetName, tz),
-        monedaFinal: serCell(row[16], sheetName, tz),
-        aprAcum: fmtPct(row[17]),
-        aprEfectivo: fmtPct(row[18]),
-      };
-
-      // Clasificar: tiene MONEDA_FINAL → completada, si no → activa
-      const mf = row[16];
-      if (mf !== null && mf !== undefined && mf.toString().trim() !== "") {
-        completadas.push(operacion);
-      } else {
-        activas.push(operacion);
-      }
-    }
-
-    Logger.log(
-      "Activas: " + activas.length + ", Completadas: " + completadas.length,
-    );
-    return { success: true, activas: activas, completadas: completadas };
+    const data = leerOperacionesDesdeSheet(sheet, tz);
+    return { success: true, activas: data.activas, completadas: data.completadas };
   } catch (error) {
     Logger.log("Error en obtenerOperaciones: " + error);
     return { success: false, message: error.toString() };
@@ -772,20 +691,13 @@ function actualizarOperacionFila(datos, sheetName) {
 
     sheet.getRange(r, 13, 1, formulas.length).setValues([formulas]);
 
-    aplicarFormatoEstructuraCapital(sheet, false);
     aplicarFormatoFilaOperacion(sheet, r, datos.moneda);
 
     SpreadsheetApp.flush();
-    const operaciones = leerOperacionesDesdeSheet(sheet, tz);
-    const operacionActualizada =
-      operaciones.activas.find((op) => op.fila === r) ||
-      operaciones.completadas.find((op) => op.fila === r) ||
-      null;
 
     return {
       success: true,
       message: "Operación actualizada correctamente",
-      operacion: operacionActualizada,
     };
   } catch (error) {
     Logger.log("Error actualizarOperacionFila: " + error);
@@ -808,8 +720,9 @@ function completarOperacion(fila, monedaFinal, sheetName) {
     sheet.getRange(r, COL.FINAL_OBT_VAL).setFormula(valFormula);
     sheet.getRange(r, COL.FINAL_OBT_MON).setValue(monedaFinal);
 
-    aplicarFormatoEstructuraCapital(sheet, false);
-    aplicarFormatoFilaOperacion(sheet, r, sheet.getRange(r, COL.MONEDA).getValue(), monedaFinal);
+    // Formato solo de la fila (sin re-aplicar estructura completa del sheet)
+    const moneda = sheet.getRange(r, COL.MONEDA).getValue();
+    aplicarFormatoFilaOperacion(sheet, r, moneda, monedaFinal);
 
     SpreadsheetApp.flush();
     return { success: true, message: "Operación completada correctamente" };
@@ -915,9 +828,7 @@ function calcularInteresesMesCapitales(ss, tz, periodKey) {
           const interesUsd = interesUsdSheet || fallbackUsd;
 
           usd += interesUsd;
-          if (moneda === "ETH") {
-            eth += (monto * apr * tiempoDias) / 365;
-          }
+          if (precio > 0) eth += interesUsd / precio;
           operaciones += 1;
         });
       }
@@ -1113,15 +1024,19 @@ function obtenerResumen(sheetName, mesIntereses) {
     const { sheet, ss } = getSheet(sheetName);
     const tz = ss.getSpreadsheetTimeZone();
     const isDefault = sheet.getName() === DEFAULT_SHEET_NAME;
+
+    // 2 lecturas en vez de 4: displayValues + (notes + formulas combinados)
     const fullRange = sheet.getRange("A1:J" + FIRST_DATA_ROW);
     const fullDisplay = fullRange.getDisplayValues();
-    const fullValues = fullRange.getValues();
-    const notasEditables = sheet.getRange("B4:B6").getNotes();
-    const formulasEditables = sheet.getRange("B4:B6").getFormulas();
-    const diasNetProfit = calcularDiasNetProfit(
-      sheet,
-      fullValues[FIRST_DATA_ROW - 1][COL.FECHA_INICIO - 1],
-    );
+
+    // Un solo viaje para notas + fórmulas de B4:B6
+    const rangoEditables = sheet.getRange("B4:B6");
+    const notasEditables = rangoEditables.getNotes();
+    const formulasEditables = rangoEditables.getFormulas();
+
+    // Leer solo la celda de fecha inicio para calcular días (evita getValues completo)
+    const fechaInicioCell = sheet.getRange(FIRST_DATA_ROW, COL.FECHA_INICIO).getValue();
+    const diasNetProfit = calcularDiasNetProfit(sheet, fechaInicioCell);
 
     let cuadro1 = [],
       cuadro2 = [],
@@ -1157,18 +1072,22 @@ function obtenerResumen(sheetName, mesIntereses) {
     try {
       notaB6 = notasEditables[2][0] || "";
       formulaB6 = formulasEditables[2][0] || "";
-    } catch (e) { }
+    } catch (e) {
+      Logger.log("Error leyendo B6: " + e);
+    }
     try {
       notaB4 = notasEditables[0][0] || "";
       formulaB4 = formulasEditables[0][0] || "";
-    } catch (e) { }
+    } catch (e) {
+      Logger.log("Error leyendo B4: " + e);
+    }
 
     Logger.log(
       "Resumen: cuadro1=" +
       cuadro1.length +
       ", cuadro2=" +
       cuadro2.length +
-      ", quadro3=" +
+      ", cuadro3=" +
       cuadro3.length,
     );
 
@@ -1199,6 +1118,8 @@ const P2P_CANTIDAD = 5;
 const P2P_CACHE_KEY = "p2p_rate";
 const P2P_CACHE_DETAIL_KEY = "p2p_rate_detail";
 const P2P_CACHE_TTL = 120;
+const P2P_PRECIO_MIN = 3;
+const P2P_PRECIO_MAX = 5;
 
 function p2pFetch(exchange, targetUrl, options) {
   try {
@@ -1219,7 +1140,7 @@ function filtrarPrecios(items, getprecio, cantidad) {
   const precios = [];
   for (let i = 0; i < items.length && precios.length < cantidad; i++) {
     const precio = parseFloat(getprecio(items[i]) || 0);
-    if (precio > 3 && precio < 5) precios.push(precio);
+    if (precio > P2P_PRECIO_MIN && precio < P2P_PRECIO_MAX) precios.push(precio);
   }
   return precios;
 }

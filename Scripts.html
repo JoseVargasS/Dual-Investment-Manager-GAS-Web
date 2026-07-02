@@ -391,6 +391,16 @@
 
     setupDelegation("activasContainer");
     setupDelegation("historialContainer");
+
+    // Delegación para checkboxes de intereses (cambia el total)
+    const monthRows = document.getElementById("monthInterestRows");
+    if (monthRows) {
+      monthRows.addEventListener("change", function (e) {
+        if (e.target.matches("input[type=checkbox][data-capital]")) {
+          actualizarTotalIntereses();
+        }
+      });
+    }
   });
 
   const TIPO_POR_MONEDA = {
@@ -768,22 +778,14 @@
     e.preventDefault();
     console.log("Guardando operación...");
 
-    setFormLoading(true);
-
     try {
       const validacion = validarFormulario();
-      if (!validacion.valid) {
-        setFormLoading(false);
-        return;
-      }
+      if (!validacion.valid) return;
 
       const { datos } = validacion;
 
-      console.log("Datos a enviar:", datos);
-
       if (!isGASAvailable()) {
         showAlert("error", "No se pudo conectar con Google Apps Script");
-        setFormLoading(false);
         return;
       }
 
@@ -793,13 +795,8 @@
         : datos.capitalOperacion || currentSheet;
       if (estabaEditando) datos.fila = window.editandoFila;
 
+      // Cerrar formulario INMEDIATAMENTE (sin esperar nada)
       cerrarFormularioDirecto();
-      raf(() => {
-        if (!estabaEditando) {
-          crearFilaPendiente({ ...datos, capitalOperacion: sheetDestino });
-        }
-      });
-
       window.editandoFila = null;
       window.editandoSheet = null;
       DOM.formOperacion.reset();
@@ -811,55 +808,79 @@
       DOM.btnGuardar?.classList.remove("btn-warning");
       setFechaHoraActual();
       clearFormErrors();
-      setFormLoading(false);
-
-      const successHandler = function (response) {
-        setFormLoading(false);
-        console.log("Respuesta servidor:", response);
-        if (response && response.success) {
-          showAlert(
-            "success",
-            estabaEditando
-              ? "Operación actualizada correctamente"
-              : "Operación guardada correctamente",
-          );
-
-          if (estabaEditando && response.operacion) {
-            actualizarOperacionActiva(response.operacion);
-          } else {
-            cargarOperaciones(true);
-          }
-          cargarResumen(true, { force: true });
-        } else {
-          showAlert("error", extraerMensaje(response, "Error en el servidor"));
-          cargarOperaciones(true); // Recargar por si acaso para quitar la fila pendiente
-        }
-      };
-
-      const failureHandler = function (error) {
-        setFormLoading(false);
-        console.error("Error de servidor:", error);
-        showAlert(
-          "error",
-          "Error: " + extraerMensaje(error, "Error desconocido"),
-        );
-        cargarOperaciones(true); // Recargar
-      };
 
       if (estabaEditando) {
+        // === OPTIMISTIC EDIT: actualizar fila en DOM inmediatamente ===
+        const opIndex = (operacionesData.activas || []).findIndex(
+          (op) => op.fila === datos.fila && (op.sheetName || currentSheet) === sheetDestino,
+        );
+        let opOriginal = null;
+        if (opIndex !== -1) {
+          opOriginal = { ...operacionesData.activas[opIndex] };
+          // Aplicar cambios al objeto en memoria
+          operacionesData.activas[opIndex] = {
+            ...opOriginal,
+            fechaInicio: datos.fechaInicio,
+            fechaFin: datos.fechaFin || opOriginal.fechaFin,
+            cex: datos.cex,
+            monto: datos.monto,
+            moneda: datos.moneda,
+            apr: datos.apr,
+            tipoOperacion: datos.tipoOperacion,
+            precioObjetivo: datos.precioObjetivo,
+          };
+          actualizarOperacionActiva(operacionesData.activas[opIndex]);
+          showAlert("success", "Operación actualizada correctamente");
+          cargarResumen(true, { force: true });
+        }
+
+        // BACKGROUND SYNC
         google.script.run
-          .withSuccessHandler(successHandler)
-          .withFailureHandler(failureHandler)
+          .withSuccessHandler(function (response) {
+            if (!response || !response.success) {
+              // REVERTIR
+              if (opOriginal && opIndex !== -1) {
+                operacionesData.activas[opIndex] = opOriginal;
+                actualizarOperacionActiva(opOriginal);
+              }
+              showAlert("error", extraerMensaje(response, "Error al actualizar"));
+            }
+          })
+          .withFailureHandler(function (error) {
+            if (opOriginal && opIndex !== -1) {
+              operacionesData.activas[opIndex] = opOriginal;
+              actualizarOperacionActiva(opOriginal);
+            }
+            showAlert("error", "Error: " + extraerMensaje(error, "Error desconocido"));
+          })
           .actualizarOperacionFila(datos, sheetDestino);
+
       } else {
+        // === CREATE: fila pending + background sync ===
+        raf(() => {
+          crearFilaPendiente({ ...datos, capitalOperacion: sheetDestino });
+        });
+        showAlert("success", "Operación guardada correctamente");
+
+        // BACKGROUND SYNC
         google.script.run
-          .withSuccessHandler(successHandler)
-          .withFailureHandler(failureHandler)
+          .withSuccessHandler(function (response) {
+            if (response && response.success) {
+              cargarOperaciones(true);
+              cargarResumen(true, { force: true });
+            } else {
+              showAlert("error", extraerMensaje(response, "Error en el servidor"));
+              eliminarFilaPending(sheetDestino || currentSheet);
+            }
+          })
+          .withFailureHandler(function (error) {
+            showAlert("error", "Error: " + extraerMensaje(error, "Error desconocido"));
+            eliminarFilaPending(sheetDestino || currentSheet);
+          })
           .agregarOperacion(datos, sheetDestino);
       }
     } catch (error) {
       console.error("Error en guardarOperacion:", error);
-      setFormLoading(false);
       showAlert("error", "Error: " + (error.message || "Error desconocido"));
     }
   }
@@ -1469,38 +1490,72 @@
           return;
         }
 
+        // === OPTIMISTIC UPDATE: mover la op de activas a completadas inmediatamente ===
+        const opIndex = (operacionesData.activas || []).findIndex(
+          (op) => op.fila === fila && (op.sheetName || currentSheet) === targetSheet,
+        );
+        if (opIndex === -1) {
+          showAlert("error", "No se encontró la operación");
+          selectElement.value = "";
+          return;
+        }
+
+        // Guardar copia para revertir en caso de error
+        const opOriginal = { ...operacionesData.activas[opIndex] };
+
+        // Clonar y agregar campos de completada
+        const opCompletada = { ...opOriginal };
+        opCompletada.monedaFinal = monedaFinal;
+        const totalNum = parseFloat(opCompletada.total) || 0;
+        if (monedaFinal === "USDT") {
+          opCompletada.final = totalNum;
+        } else {
+          const precio = parseFloat(opCompletada.precioObjetivo) || 0;
+          opCompletada.final = precio > 0 ? totalNum / precio : totalNum;
+        }
+
+        // Mover de activas a completadas
+        operacionesData.activas.splice(opIndex, 1);
+        if (!operacionesData.completadas) operacionesData.completadas = [];
+        operacionesData.completadas.push(opCompletada);
+
+        // Animar salida y re-renderizar silenciosamente
         const opRow = document.querySelector(
           `.operacion-row[data-fila='${fila}'][data-sheet='${escapeCssValue(targetSheet)}']`,
         );
         if (opRow) {
-          opRow.classList.add("anim-row-completing");
+          opRow.classList.add("anim-row-exit");
         }
 
+        raf(() => {
+          renderizarActivas(operacionesData.activas || []);
+          renderizarHistorial(operacionesData.completadas || [], (operacionesData.completadas || []).length - 1);
+        });
+
+        showAlert("success", "Operación completada correctamente");
+
+        // === BACKGROUND SYNC: enviar al servidor sin bloquear ===
         google.script.run
           .withSuccessHandler(function (response) {
             if (response && response.success) {
-              if (opRow) {
-                opRow.classList.remove("anim-row-completing");
-                opRow.classList.add("anim-row-exit");
-              }
-              showAlert("success", "Operación completada correctamente");
-              setTimeout(() => refrescarTodo(true), 300);
+              // Solo actualizar resumen financiero (las ops ya están en DOM)
+              cargarResumen(true, { force: true });
             } else {
-              if (opRow) opRow.classList.remove("anim-row-completing");
+              // REVERTIR: volver a activas
+              revertirCompletarOp(opOriginal, opCompletada);
               showAlert(
                 "error",
                 extraerMensaje(response, "Error al completar"),
               );
-              selectElement.value = "";
             }
           })
           .withFailureHandler(function (error) {
-            if (opRow) opRow.classList.remove("anim-row-completing");
+            // REVERTIR: volver a activas
+            revertirCompletarOp(opOriginal, opCompletada);
             showAlert(
               "error",
               "Error: " + extraerMensaje(error, "Error desconocido"),
             );
-            selectElement.value = "";
           })
           .completarOperacion(fila, monedaFinal, targetSheet);
       },
@@ -1508,6 +1563,21 @@
         selectElement.value = "";
       },
     );
+  }
+
+  function revertirCompletarOp(opOriginal, opCompletada) {
+    // Quitar de completadas
+    const compIdx = (operacionesData.completadas || []).findIndex(
+      (op) => op.fila === opCompletada.fila && (op.sheetName || currentSheet) === (opCompletada.sheetName || currentSheet),
+    );
+    if (compIdx !== -1) operacionesData.completadas.splice(compIdx, 1);
+    // Volver a activas
+    operacionesData.activas.push(opOriginal);
+    // Re-renderizar
+    raf(() => {
+      renderizarActivas(operacionesData.activas || []);
+      renderizarHistorial(operacionesData.completadas || [], 0);
+    });
   }
 
   function eliminarOperacionUI(fila, sheetName) {
@@ -1520,6 +1590,18 @@
           return;
         }
 
+        // === OPTIMISTIC UPDATE: eliminar del DOM inmediatamente ===
+        const opIndex = (operacionesData.activas || []).findIndex(
+          (op) => op.fila === fila && (op.sheetName || currentSheet) === targetSheet,
+        );
+        if (opIndex === -1) {
+          showAlert("error", "No se encontró la operación");
+          return;
+        }
+
+        // Guardar para revertir
+        const opEliminada = operacionesData.activas.splice(opIndex, 1)[0];
+
         const opRow = document.querySelector(
           `.operacion-row[data-fila='${fila}'][data-sheet='${escapeCssValue(targetSheet)}']`,
         );
@@ -1528,26 +1610,41 @@
           opRow.classList.add("anim-row-collapse");
         }
 
+        // Re-renderizar activas silenciosamente
+        raf(() => {
+          renderizarActivas(operacionesData.activas || []);
+        });
+
+        showAlert("success", "Operación eliminada");
+
+        // === BACKGROUND SYNC ===
         google.script.run
           .withSuccessHandler(function (response) {
             if (response && response.success) {
-              showAlert("success", "Operación eliminada");
-              refrescarTodo(true);
+              cargarResumen(true, { force: true });
             } else {
-              if (opRow) {
-                opRow.classList.remove("anim-row-collapse");
-              }
+              // REVERTIR
+              revertirEliminarOp(opEliminada);
               showAlert("error", extraerMensaje(response, "Error al eliminar"));
             }
           })
           .withFailureHandler(function (error) {
-            if (opRow) opRow.style.display = "";
+            // REVERTIR
+            revertirEliminarOp(opEliminada);
             showAlert("error", extraerMensaje(error, "Error de conexión"));
-            refrescarTodo(true);
           })
           .eliminarOperacionFila(fila, targetSheet);
       },
     );
+  }
+
+  function revertirEliminarOp(opEliminada) {
+    // Volver a insertar en activas (mantener orden por fila)
+    operacionesData.activas.push(opEliminada);
+    operacionesData.activas.sort((a, b) => (a.fila || 0) - (b.fila || 0));
+    raf(() => {
+      renderizarActivas(operacionesData.activas || []);
+    });
   }
 
   function cargarEdicionOperacion(fila, sheetName) {
@@ -2385,6 +2482,7 @@
           </div>
           <div class="month-interest-list">
             <div class="month-interest-row month-interest-head">
+              <span class="month-interest-head-check">Sel.</span>
               <span>Capital</span>
               <span>USDT</span>
               <span>ETH</span>
@@ -2543,7 +2641,7 @@
 
   function buildInteresesMesRows(rows) {
     const precioEth = obtenerPrecioETHActualNumero();
-    return (rows || [])
+    const body = (rows || [])
       .map((row) => {
         const usd = Number(row.usd) || 0;
         const eth = Number(row.eth) || 0;
@@ -2551,27 +2649,74 @@
         const ethRef = formatearReferenciaETH(eth, precioEth);
         return `
           <div class="month-interest-row">
+            <span class="month-interest-check"><input type="checkbox" checked data-capital="${sanitize(row.capital || "")}"></span>
             <span class="month-interest-capital">${sanitize(row.capital || "-")}</span>
-            <span class="month-interest-value">${FORMATO_USD.format(usd)} USDT</span>
+            <span class="month-interest-value" data-capital-usd="${usd}">${FORMATO_USD.format(usd)} USDT</span>
             <span class="month-interest-value eth" data-eth-value="${eth}">${FORMATO_CRYPTO.format(eth)} ETH${ethRef}</span>
-            <span class="month-interest-value count">${ops} ${ops === 1 ? "op." : "ops."}</span>
+            <span class="month-interest-value count" data-capital-ops="${ops}">${ops} ${ops === 1 ? "op." : "ops."}</span>
           </div>`;
       })
       .join("");
+
+    const totalUsd = (rows || []).reduce((s, r) => s + (Number(r.usd) || 0), 0);
+    const totalEth = (rows || []).reduce((s, r) => s + (Number(r.eth) || 0), 0);
+    const totalOps = (rows || []).reduce((s, r) => s + (Number(r.operaciones) || 0), 0);
+    const totalEthRef = formatearReferenciaETH(totalEth, precioEth);
+
+    return body + `
+      <div class="month-interest-row month-interest-total" id="interesesTotalRow">
+        <span class="month-interest-check"></span>
+        <span class="month-interest-capital">Total</span>
+        <span class="month-interest-value" id="totalInteresesUsd">${FORMATO_USD.format(totalUsd)} USDT</span>
+        <span class="month-interest-value eth" data-eth-value="${totalEth}" id="totalInteresesEth">${FORMATO_CRYPTO.format(totalEth)} ETH${totalEthRef}</span>
+        <span class="month-interest-value count" id="totalInteresesOps">${totalOps} ${totalOps === 1 ? "op." : "ops."}</span>
+      </div>`;
+  }
+
+  function actualizarTotalIntereses() {
+    const rows = $$("#monthInterestRows .month-interest-row:not(.month-interest-head):not(.month-interest-total)");
+    let totalUsd = 0, totalEth = 0, totalOps = 0;
+    rows.forEach(function (row) {
+      const chk = row.querySelector("input[type=checkbox]");
+      if (!chk || !chk.checked) return;
+      const usdEl = row.querySelector("[data-capital-usd]");
+      const ethEl = row.querySelector("[data-eth-value]");
+      const opsEl = row.querySelector("[data-capital-ops]");
+      totalUsd += parseFloat(usdEl?.dataset.capitalUsd || "0") || 0;
+      totalEth += parseFloat(ethEl?.dataset.ethValue || "0") || 0;
+      totalOps += parseInt(opsEl?.dataset.capitalOps || "0", 10) || 0;
+    });
+    const precioEth = obtenerPrecioETHActualNumero();
+    const totalEl = document.getElementById("interesesTotalRow");
+    if (!totalEl) return;
+    const usdEl = document.getElementById("totalInteresesUsd");
+    const ethEl = document.getElementById("totalInteresesEth");
+    const opsEl = document.getElementById("totalInteresesOps");
+    if (usdEl) usdEl.textContent = FORMATO_USD.format(totalUsd) + " USDT";
+    if (ethEl) ethEl.innerHTML = FORMATO_CRYPTO.format(totalEth) + " ETH" + formatearReferenciaETH(totalEth, precioEth);
+    if (opsEl) opsEl.textContent = totalOps + " " + (totalOps === 1 ? "op." : "ops.");
   }
 
   function actualizarReferenciasETHMes() {
     const precioEth = obtenerPrecioETHActualNumero();
     if (!precioEth) return;
-    $$(".month-interest-value.eth[data-eth-value]").forEach((el) => {
+    // Update per-capital rows
+    $$(".month-interest-value.eth[data-eth-value]:not(#totalInteresesEth)").forEach((el) => {
       const eth = parseFloat(el.dataset.ethValue || "0") || 0;
       el.innerHTML = `${FORMATO_CRYPTO.format(eth)} ETH${formatearReferenciaETH(eth, precioEth)}`;
     });
+    // Update total row
+    const totalEthEl = document.getElementById("totalInteresesEth");
+    if (totalEthEl) {
+      const eth = parseFloat(totalEthEl.dataset.ethValue || "0") || 0;
+      totalEthEl.innerHTML = `${FORMATO_CRYPTO.format(eth)} ETH${formatearReferenciaETH(eth, precioEth)}`;
+    }
   }
 
   function skeletonInteresesMes() {
     return Array.from({ length: 3 }, () => `
       <div class="month-interest-row month-interest-skeleton-row" aria-hidden="true">
+        <span class="skeleton skeleton-month-cell check"></span>
         <span class="skeleton skeleton-month-cell wide"></span>
         <span class="skeleton skeleton-month-cell"></span>
         <span class="skeleton skeleton-month-cell"></span>
@@ -2595,6 +2740,7 @@
     rowsContainer.innerHTML = rows.length
       ? buildInteresesMesRows(rows)
       : '<div class="resumen-item"><span class="resumen-label">Sin capitales activos</span><span class="resumen-value">-</span></div>';
+    if (rows.length) raf(actualizarTotalIntereses);
   }
 
   function cambiarMesIntereses(monthKey) {
@@ -3302,7 +3448,9 @@
   function formatearFecha(fecha) {
     if (!fecha) return "-";
     try {
-      const d = new Date(fecha.replace(/-/g, "/"));
+      // Normalizar: soporta "yyyy-MM-dd HH:mm:ss" (servidor) y "yyyy-MM-ddTHH:mm" (input local)
+      const normalizado = String(fecha).replace("T", " ").replace(/-/g, "/");
+      const d = new Date(normalizado);
       if (isNaN(d.getTime())) return "-";
       return d.toLocaleString("es-ES", {
         day: "2-digit",
@@ -3532,7 +3680,7 @@
     });
   }
 
-  /** Crea una fila temporal en la tabla de activas mientras se guarda */
+  /** Crea una fila real en la tabla de activas (sin skeletons, sin "Procesando...") */
   function crearFilaPendiente(datos) {
     const container = document.getElementById("activasContainer");
     if (!container) return;
@@ -3571,45 +3719,124 @@
     const tbody = container.querySelector("tbody");
     if (!tbody) return;
 
+    const sheetName = sanitize(datos.capitalOperacion || currentSheet);
+    const moneda = String(datos.moneda || "USDT");
+    const monedaKey = getMonedaKey(moneda);
     const fechaInicio = formatearFecha(datos.fechaInicio);
-    const montoFormateado = formatearMonto(datos.monto, datos.moneda);
-    const badgeClass = getBadgeClass(datos.tipoOperacion);
-    const monedaKey = String(datos.moneda)
-      .toLowerCase()
-      .replace(/[^a-z]/g, "");
+    const montoFormateado = formatearMonto(datos.monto, moneda);
+    const tmpId = "pending-" + Date.now();
+
+    // === Calcular usando las mismas fórmulas que la hoja ===
+    const montoNum = parseFloat(datos.monto) || 0;
+    const aprDec = (parseFloat(datos.apr) || 0) / 100; // APR como decimal (ej: 0.85)
+    const precioObj = parseFloat(datos.precioObjetivo) || 0;
+    const esCrypto = moneda === "ETH" || moneda === "BTC";
+
+    // Calcular Fecha Fin igual que calcFechaFin en el backend
+    let tiempoDias = 0;
+    try {
+      const normalizado = String(datos.fechaInicio).replace("T", " ").replace(/-/g, "/");
+      const fechaInicioObj = new Date(normalizado);
+      if (!isNaN(fechaInicioObj.getTime())) {
+        let fechaFinObj;
+        const cexLower = (datos.cex || "").toLowerCase();
+        if (cexLower === "bybit") {
+          fechaFinObj = new Date(fechaInicioObj.getTime() + 8 * 60 * 60 * 1000);
+        } else {
+          // Día siguiente a las 3:00 AM (misma lógica que calcFechaFin)
+          const nextDay = new Date(fechaInicioObj.getTime() + 86400000);
+          fechaFinObj = new Date(nextDay.getFullYear(), nextDay.getMonth(), nextDay.getDate(), 3, 0, 0);
+        }
+        tiempoDias = Math.max(0, (fechaFinObj - fechaInicioObj) / (1000 * 60 * 60 * 24));
+      }
+    } catch (e) { /* ignore */ }
+
+    // Fórmula R: Interés (=IF(I="USDT", H*J*Q/365, H*J*Q*L/365))
+    const interesNum = esCrypto
+      ? montoNum * aprDec * tiempoDias * precioObj / 365
+      : montoNum * aprDec * tiempoDias / 365;
+
+    // Fórmula S: Total calc (=IF(I="USDT", H+R, H*L+R))
+    const totalNum = esCrypto
+      ? montoNum * precioObj + interesNum
+      : montoNum + interesNum;
+
+    const interesStr = formatearInteres(interesNum, moneda);
+    const totalStr = totalNum > 0 ? "$" + FORMATO_USD.format(totalNum) : "-";
+
+    // Badge de tiempo transcurrido
+    let duracionBadge = "";
+    if (tiempoDias > 0) {
+      const diasInt = Math.floor(tiempoDias);
+      const hrsInt = Math.round((tiempoDias - diasInt) * 24);
+      let tStr = "";
+      if (diasInt > 0) tStr += diasInt + (diasInt === 1 ? " dia " : " dias ");
+      if (hrsInt > 0 || diasInt === 0) tStr += hrsInt + (hrsInt === 1 ? " hora" : " horas");
+      duracionBadge = `<div class="badge-duration live">${tStr.trim()}</div>`;
+    }
 
     const row = document.createElement("tr");
-    row.className = "operacion-row anim-row-pending";
+    row.className = "operacion-row anim-row-new";
+    row.dataset.fila = tmpId;
+    row.dataset.sheet = sheetName;
+    row.dataset.historial = "false";
+    row.dataset.pending = "true";
     row.innerHTML = `
     <td class="td-nowrap">
-      <span class="badge-duration badge-capital">${sanitize(datos.capitalOperacion || currentSheet)}</span>
+      <span class="badge-duration badge-capital">${sheetName}</span>
     </td>
     <td class="td-nowrap">
       <div style="margin-bottom:2px;">${fechaInicio}</div>
-      <div class="badge-duration">Procesando...</div>
+      ${duracionBadge}
     </td>
-    <td><strong>${datos.cex}</strong></td>
+    <td>
+      <div class="cex-badge">
+        <span style="color:var(--primary); font-weight:600; font-size:0.78rem;">${sanitize(datos.cex || "-")}</span>
+      </div>
+    </td>
     <td class="td-nowrap">
       <div style="display:flex; align-items:center; gap:8px;">
         <span>${montoFormateado}</span>
-        <span class="badge badge-${monedaKey}">${datos.moneda}</span>
+        <span class="badge badge-${monedaKey}">${moneda}</span>
       </div>
     </td>
     <td><strong>${datos.apr}%</strong></td>
     <td class="td-nowrap">
       ${renderOperacionCell(datos.tipoOperacion, datos.precioObjetivo)}
     </td>
-    <td><div class="skeleton" style="width:60px; height:18px;"></div></td>
-    <td><div class="skeleton" style="width:60px; height:18px;"></div></td>
-    <td><div class="skeleton" style="width:52px; height:18px;"></div></td>
-    <td><div class="skeleton" style="width:52px; height:18px;"></div></td>
-    <td></td>
+    <td class="success"><strong>${interesStr}</strong></td>
+    <td class="highlight"><strong>${totalStr}</strong></td>
+    <td>-</td>
+    <td>-</td>
+    <td class="td-nowrap">
+      <div style="display:flex; gap:8px;">
+        <button class="btn-icon btn-edit" title="Editar" disabled>
+          <i data-lucide="pencil" style="pointer-events:none;"></i>
+        </button>
+        <button class="btn-icon btn-icon-danger btn-delete" title="Eliminar" disabled>
+          <i data-lucide="trash-2" style="pointer-events:none;"></i>
+        </button>
+      </div>
+    </td>
   `;
 
     tbody.appendChild(row);
-
-    // Scrollear a la tabla para ver el feedback
+    refreshIcons();
     container.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  /** Elimina la fila pending de una operación que falló al guardarse */
+  function eliminarFilaPending(sheetName) {
+    const container = document.getElementById("activasContainer");
+    if (!container) return;
+    const pendingRows = container.querySelectorAll("[data-pending='true']");
+    pendingRows.forEach((row) => {
+      const rowSheet = row.dataset.sheet || null;
+      if (!sheetName || rowSheet === sheetName) {
+        row.classList.add("anim-row-collapse");
+        setTimeout(() => row.remove(), 300);
+      }
+    });
   }
 
   /** Efecto de partículas al eliminar - limitado a la fila */
