@@ -1706,20 +1706,16 @@
     justify-content: center;
     border: 1px solid rgba(0, 255, 148, 0.28);
     border-radius: var(--radius-md);
-    background:
-      linear-gradient(145deg, rgba(0, 255, 148, 0.12), rgba(96, 165, 250, 0.1)),
-      var(--glass-bg);
+    background: var(--bg-secondary);
     color: var(--primary);
     cursor: pointer;
-    box-shadow: 0 10px 24px rgba(0, 255, 148, 0.08);
-    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    transition: transform 0.18s ease, border-color 0.18s ease;
     flex: 0 0 auto;
   }
 
   .btn-chart-capital:hover {
     transform: translateY(-1px);
     border-color: rgba(0, 255, 148, 0.56);
-    box-shadow: 0 14px 34px rgba(0, 255, 148, 0.15);
   }
 
   .btn-chart-capital svg {
@@ -1936,8 +1932,8 @@
 
   .capital-chart-line {
     fill: none;
-    stroke: url(#capitalLineGradient);
-    stroke-width: 4;
+    stroke: var(--primary);
+    stroke-width: 2.5;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
@@ -2337,8 +2333,7 @@
   .returns-option.is-active {
     background: var(--bg-primary);
     color: var(--text-primary);
-    box-shadow: 0 0 0 1px rgba(0, 255, 148, 0.24),
-      0 8px 18px rgba(0, 255, 148, 0.12);
+    box-shadow: 0 0 0 1px rgba(0, 255, 148, 0.24);
   }
 
   .returns-results {
@@ -2377,7 +2372,6 @@
     font-weight: 800;
     line-height: 1.1;
     overflow-wrap: anywhere;
-    text-shadow: 0 0 18px rgba(0, 255, 148, 0.12);
   }
 
   .returns-breakdown {

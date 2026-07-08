@@ -2363,18 +2363,12 @@
         <div class="capital-chart-plot">
           <svg id="capitalEvolutionSvg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Grafica de evolucion temporal en USDT">
             <defs>
-              <linearGradient id="capitalLineGradient" x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0%" stop-color="#93c5fd" />
-                <stop offset="52%" stop-color="#00ff94" />
-                <stop offset="100%" stop-color="#f5d061" />
-              </linearGradient>
               <linearGradient id="capitalAreaGradient" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stop-color="#00ff94" stop-opacity="0.34" />
-                <stop offset="62%" stop-color="#60a5fa" stop-opacity="0.12" />
+                <stop offset="0%" stop-color="#00ff94" stop-opacity="0.32" />
                 <stop offset="100%" stop-color="#00ff94" stop-opacity="0" />
               </linearGradient>
               <filter id="capitalGlow" x="-30%" y="-30%" width="160%" height="160%">
-                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feGaussianBlur stdDeviation="2.5" result="blur" />
                 <feMerge>
                   <feMergeNode in="blur" />
                   <feMergeNode in="SourceGraphic" />
