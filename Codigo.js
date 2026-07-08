@@ -783,10 +783,20 @@ function obtenerPeriodoPagoKey(fecha, tz) {
   return Utilities.formatDate(cutoff, tz, "yyyy-MM-dd");
 }
 
+const MESES_LABEL = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
 function formatearLabelPeriodo(periodKey) {
   const parts = String(periodKey || "").split("-");
   if (parts.length !== 3) return "ciclo actual";
-  return parts[2] + "/" + parts[1] + "/" + parts[0];
+  const y = parseInt(parts[0], 10);
+  const m = parseInt(parts[1], 10);
+  if (!isFinite(y) || !isFinite(m) || m < 1 || m > 12) return "ciclo actual";
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevY = m === 1 ? y - 1 : y;
+  return MESES_LABEL[prevM - 1] + " " + String(prevY).slice(-2);
 }
 
 function calcularInteresesMesCapitales(ss, tz, periodKey) {
@@ -871,46 +881,6 @@ function obtenerInteresesMesCapitales(mesIntereses) {
   }
 }
 
-function valorOperacionInicialUSDT(row) {
-  const monto = toFiniteNumber(row[3]);
-  const moneda = String(row[4] || "USDT").trim().toUpperCase();
-  const precio = toFiniteNumber(row[7]);
-  return moneda === "USDT" ? monto : monto * precio;
-}
-
-function valorOperacionFinalUSDT(row) {
-  const precio = toFiniteNumber(row[7]);
-  const totalCalculado = toFiniteNumber(row[14]);
-  const finalValor = toFiniteNumber(row[15]);
-  const monedaFinal = String(row[16] || "").trim().toUpperCase();
-
-  if (finalValor > 0 && monedaFinal) {
-    return monedaFinal === "USDT" ? finalValor : finalValor * precio;
-  }
-
-  return totalCalculado;
-}
-
-function valorOperacionActualUSDT(row, hoy) {
-  const fechaInicio = row[0];
-  if (!(fechaInicio instanceof Date) || isNaN(fechaInicio.getTime())) return 0;
-
-  const monto = toFiniteNumber(row[3]);
-  const moneda = String(row[4] || "USDT").trim().toUpperCase();
-  const apr = toFiniteNumber(row[5]);
-  const precio = toFiniteNumber(row[7]);
-  const base = valorOperacionInicialUSDT(row);
-  const fechaFin = row[1] instanceof Date && !isNaN(row[1].getTime()) ? row[1] : hoy;
-  const limite = fechaFin.getTime() > hoy.getTime() ? hoy : fechaFin;
-  const dias = Math.max(0, (limite.getTime() - fechaInicio.getTime()) / 86400000);
-  const interes =
-    moneda === "USDT"
-      ? (monto * apr * dias) / 365
-      : (monto * apr * dias * precio) / 365;
-
-  return base + interes;
-}
-
 function normalizarPuntoEvolucion(fecha, valor, tipo, tz) {
   return {
     fecha: Utilities.formatDate(fecha, tz, "yyyy-MM-dd HH:mm:ss"),
@@ -955,54 +925,72 @@ function obtenerEvolucionCapitalUSDT(sheetName) {
     }
 
     const puntos = [];
-    const primera = rows[0];
-    puntos.push(
-      normalizarPuntoEvolucion(
-        primera[0],
-        valorOperacionInicialUSDT(primera),
-        "Inicio",
-        tz,
-      ),
-    );
-
-    let valorActual = puntos[0].valor;
+    let valorActual = 0;
     rows.forEach((row) => {
-      const fechaInicio = row[0];
       const fechaFin = row[1];
-      const monedaFinal = String(row[16] || "").trim();
-      let fechaPunto = fechaFin instanceof Date && !isNaN(fechaFin.getTime()) ? fechaFin : fechaInicio;
-      let tipo = monedaFinal ? "Cierre" : "Actual";
-      let valor = monedaFinal ? valorOperacionFinalUSDT(row) : valorOperacionActualUSDT(row, hoy);
+      const totalCalculado = toFiniteNumber(row[14]);
+      const finalValor = toFiniteNumber(row[15]);
+      const monedaFinal = String(row[16] || "").trim().toUpperCase();
 
-      if (!monedaFinal && fechaPunto.getTime() > hoy.getTime()) {
-        fechaPunto = hoy;
+      const esOperacionCerrada = monedaFinal && finalValor > 0;
+      const fechaFinValida = fechaFin instanceof Date && !isNaN(fechaFin.getTime());
+
+      // Cada op aporta UN punto con el total calculado (columna S) en su
+      // fecha de fin. No se genera un "Inicio" separado: el total calculado
+      // es el valor de referencia que ya está en USDT.
+      if (fechaFinValida && totalCalculado > 0) {
+        const tipo = esOperacionCerrada ? "Cierre" : "Actual";
+        puntos.push(normalizarPuntoEvolucion(fechaFin, totalCalculado, tipo, tz));
+        valorActual = totalCalculado;
       }
-
-      if (!valor || !isFinite(valor)) return;
-      valorActual = valor;
-      puntos.push(normalizarPuntoEvolucion(fechaPunto, valor, tipo, tz));
     });
 
-    puntos.sort((a, b) => a.ts - b.ts);
+    // Agrupar puntos por día (en el timezone de la hoja): cuando varias
+    // operaciones caen en la misma fecha se consolidan en un solo punto
+    // sumando los valores USDT, evitando saltos visuales en la gráfica.
+    const gruposPorDia = {};
+    puntos.forEach((p) => {
+      const dayKey = Utilities.formatDate(new Date(p.ts), tz, "yyyy-MM-dd");
+      if (!gruposPorDia[dayKey]) {
+        gruposPorDia[dayKey] = { sum: 0, ts: p.ts, tipo: p.tipo };
+      }
+      gruposPorDia[dayKey].sum += Number(p.valor) || 0;
+      if (p.ts > gruposPorDia[dayKey].ts) {
+        gruposPorDia[dayKey].ts = p.ts;
+        gruposPorDia[dayKey].tipo = p.tipo;
+      }
+    });
+
+    const puntosAgrupados = Object.keys(gruposPorDia)
+      .sort()
+      .map((dayKey) => {
+        const g = gruposPorDia[dayKey];
+        return {
+          fecha: Utilities.formatDate(new Date(g.ts), tz, "yyyy-MM-dd HH:mm:ss"),
+          ts: g.ts,
+          valor: Math.round(g.sum * 100) / 100,
+          tipo: g.tipo,
+        };
+      });
 
     const hoyKey = Utilities.formatDate(hoy, tz, "yyyy-MM-dd");
-    const ultimo = puntos[puntos.length - 1];
+    const ultimo = puntosAgrupados[puntosAgrupados.length - 1];
     if (ultimo && String(ultimo.fecha).slice(0, 10) < hoyKey) {
-      puntos.push(normalizarPuntoEvolucion(hoy, valorActual, "Actualidad", tz));
+      puntosAgrupados.push(normalizarPuntoEvolucion(hoy, valorActual, "Actualidad", tz));
     }
 
-    const inicio = puntos[0]?.valor || 0;
-    const actual = puntos[puntos.length - 1]?.valor || 0;
-    const maximo = puntos.reduce((max, p) => Math.max(max, Number(p.valor) || 0), 0);
-    const minimo = puntos.reduce(
+    const inicio = puntosAgrupados[0]?.valor || 0;
+    const actual = puntosAgrupados[puntosAgrupados.length - 1]?.valor || 0;
+    const maximo = puntosAgrupados.reduce((max, p) => Math.max(max, Number(p.valor) || 0), 0);
+    const minimo = puntosAgrupados.reduce(
       (min, p) => Math.min(min, Number(p.valor) || 0),
-      puntos[0]?.valor || 0,
+      puntosAgrupados[0]?.valor || 0,
     );
 
     return {
       success: true,
       sheetName: actualSheetName,
-      puntos,
+      puntos: puntosAgrupados,
       resumen: {
         inicio,
         actual,
