@@ -23,6 +23,8 @@
   let resumenRetryTimer = null;
   let evolucionCapitalData = null;
   let evolucionCapitalRango = "max";
+  // Cache de evolución del capital por sheet: { data, ts, stale, fetching }
+  const evolucionCache = {};
 
   const FORMATO_NUMERO = new Intl.NumberFormat("es-ES", {
     minimumFractionDigits: 2,
@@ -392,11 +394,11 @@
     setupDelegation("activasContainer");
     setupDelegation("historialContainer");
 
-    // Delegación para checkboxes de intereses (cambia el total)
-    const monthRows = document.getElementById("monthInterestRows");
-    if (monthRows) {
-      monthRows.addEventListener("change", function (e) {
-        if (e.target.matches("input[type=checkbox][data-capital]")) {
+    // Delegación para checkboxes de intereses (cambia el total).
+    // Se delega al resumenContainer para sobrevivir a re-renders del resumen.
+    if (DOM.resumenContainer) {
+      DOM.resumenContainer.addEventListener("change", function (e) {
+        if (e.target.matches("#monthInterestRows input[type=checkbox][data-capital]")) {
           actualizarTotalIntereses();
         }
       });
@@ -844,6 +846,8 @@
                 actualizarOperacionActiva(opOriginal);
               }
               showAlert("error", extraerMensaje(response, "Error al actualizar"));
+            } else {
+              invalidarEvolucionCache(sheetDestino);
             }
           })
           .withFailureHandler(function (error) {
@@ -868,6 +872,7 @@
             if (response && response.success) {
               cargarOperaciones(true);
               cargarResumen(true, { force: true });
+              invalidarEvolucionCache(sheetDestino || currentSheet);
             } else {
               showAlert("error", extraerMensaje(response, "Error en el servidor"));
               eliminarFilaPending(sheetDestino || currentSheet);
@@ -1079,6 +1084,8 @@
           return;
         }
         renderizarResumen(resumen);
+        // Pre-cargar la gráfica del capital actual en background
+        prefetchEvolucionCapital(currentSheet);
       })
       .withFailureHandler(function (error) {
         if (requestId !== resumenRequestSeq) return;
@@ -1390,9 +1397,12 @@
     const container = $("historialContainer");
     if (!container) return;
 
-    actualizarContador("countHistorial", completadas.length);
+    const filtradas = (completadas || []).filter(
+      (op) => (op.sheetName || currentSheet) === currentSheet,
+    );
+    actualizarContador("countHistorial", filtradas.length);
 
-    if (!completadas || completadas.length === 0) {
+    if (!filtradas || filtradas.length === 0) {
       container.innerHTML = `
       <div class="empty-state">
         <i data-lucide="satellite" class="empty-state-icon" style="width:48px; height:48px; margin: 0 auto 16px; display: block;"></i>
@@ -1403,8 +1413,8 @@
       return;
     }
 
-    const ordenadas = [...completadas].reverse();
-    const nuevasCount = Math.max(0, completadas.length - (prevCount || 0));
+    const ordenadas = [...filtradas].reverse();
+    const nuevasCount = Math.max(0, filtradas.length - (prevCount || 0));
 
     let html = `
     <div class="table-container historial-table-container">
@@ -1503,21 +1513,24 @@
         // Guardar copia para revertir en caso de error
         const opOriginal = { ...operacionesData.activas[opIndex] };
 
-        // Clonar y agregar campos de completada
-        const opCompletada = { ...opOriginal };
-        opCompletada.monedaFinal = monedaFinal;
-        const totalNum = parseFloat(opCompletada.total) || 0;
-        if (monedaFinal === "USDT") {
-          opCompletada.final = totalNum;
-        } else {
-          const precio = parseFloat(opCompletada.precioObjetivo) || 0;
-          opCompletada.final = precio > 0 ? totalNum / precio : totalNum;
-        }
-
-        // Mover de activas a completadas
+        // Mover de activas a completadas solo si pertenece al capital actual;
+        // si es de otro capital, no debe filtrarse en el historial visible aquí.
         operacionesData.activas.splice(opIndex, 1);
-        if (!operacionesData.completadas) operacionesData.completadas = [];
-        operacionesData.completadas.push(opCompletada);
+
+        if (targetSheet === currentSheet) {
+          // Clonar y agregar campos de completada
+          const opCompletada = { ...opOriginal };
+          opCompletada.monedaFinal = monedaFinal;
+          const totalNum = parseFloat(opCompletada.total) || 0;
+          if (monedaFinal === "USDT") {
+            opCompletada.final = totalNum;
+          } else {
+            const precio = parseFloat(opCompletada.precioObjetivo) || 0;
+            opCompletada.final = precio > 0 ? totalNum / precio : totalNum;
+          }
+          if (!operacionesData.completadas) operacionesData.completadas = [];
+          operacionesData.completadas.push(opCompletada);
+        }
 
         // Animar salida y re-renderizar silenciosamente
         const opRow = document.querySelector(
@@ -1540,6 +1553,8 @@
             if (response && response.success) {
               // Solo actualizar resumen financiero (las ops ya están en DOM)
               cargarResumen(true, { force: true });
+              // La op pasó al historial → invalidar y refrescar caché de la gráfica
+              invalidarEvolucionCache(targetSheet);
             } else {
               // REVERTIR: volver a activas
               revertirCompletarOp(opOriginal, opCompletada);
@@ -1566,14 +1581,17 @@
   }
 
   function revertirCompletarOp(opOriginal, opCompletada) {
-    // Quitar de completadas
-    const compIdx = (operacionesData.completadas || []).findIndex(
-      (op) => op.fila === opCompletada.fila && (op.sheetName || currentSheet) === (opCompletada.sheetName || currentSheet),
-    );
-    if (compIdx !== -1) operacionesData.completadas.splice(compIdx, 1);
-    // Volver a activas
-    operacionesData.activas.push(opOriginal);
-    // Re-renderizar
+    if (opCompletada) {
+      const compIdx = (operacionesData.completadas || []).findIndex(
+        (op) => op.fila === opCompletada.fila && (op.sheetName || currentSheet) === (opCompletada.sheetName || currentSheet),
+      );
+      if (compIdx !== -1) operacionesData.completadas.splice(compIdx, 1);
+    }
+    if (!(operacionesData.activas || []).some(
+      (op) => op.fila === opOriginal.fila && (op.sheetName || currentSheet) === (opOriginal.sheetName || currentSheet),
+    )) {
+      operacionesData.activas.push(opOriginal);
+    }
     raf(() => {
       renderizarActivas(operacionesData.activas || []);
       renderizarHistorial(operacionesData.completadas || [], 0);
@@ -1622,6 +1640,7 @@
           .withSuccessHandler(function (response) {
             if (response && response.success) {
               cargarResumen(true, { force: true });
+              invalidarEvolucionCache(targetSheet);
             } else {
               // REVERTIR
               revertirEliminarOp(opEliminada);
@@ -2045,6 +2064,66 @@
   // ============================================
   // GRAFICA DE EVOLUCION DEL CAPITAL
   // ============================================
+  function prefetchEvolucionCapital(sheetName, forzar) {
+    if (!sheetName) return;
+    if (!isGASAvailable()) return;
+    const cache = evolucionCache[sheetName];
+    if (cache && cache.fetching) return;
+    if (!forzar && cache && cache.data && !cache.stale) return;
+
+    evolucionCache[sheetName] = {
+      data: cache?.data || null,
+      ts: cache?.ts || 0,
+      stale: cache?.stale || false,
+      fetching: true,
+    };
+
+    google.script.run
+      .withSuccessHandler(function (resp) {
+        if (resp && resp.success) {
+          evolucionCache[sheetName] = {
+            data: resp,
+            ts: Date.now(),
+            stale: false,
+            fetching: false,
+          };
+          // Si la gráfica está abierta y coincide con este sheet, refrescar visualmente
+          const modal = $("modalEvolucionCapital");
+          const sheetActiva =
+            $("vistaCapitalSelect")?.value || currentSheet || DEFAULT_SHEET_NAME;
+          if (modal?.classList.contains("active") && sheetActiva === sheetName) {
+            evolucionCapitalData = resp;
+            renderizarGraficaCapital(resp);
+          }
+        } else {
+          evolucionCache[sheetName] = {
+            data: cache?.data || null,
+            ts: cache?.ts || 0,
+            stale: false,
+            fetching: false,
+          };
+        }
+      })
+      .withFailureHandler(function (error) {
+        evolucionCache[sheetName] = {
+          data: cache?.data || null,
+          ts: cache?.ts || 0,
+          stale: false,
+          fetching: false,
+        };
+        console.warn("Error prefetching evolucion capital:", error);
+      })
+      .obtenerEvolucionCapitalUSDT(sheetName);
+  }
+
+  function invalidarEvolucionCache(sheetName) {
+    if (!sheetName) return;
+    if (evolucionCache[sheetName]) {
+      evolucionCache[sheetName].stale = true;
+    }
+    prefetchEvolucionCapital(sheetName);
+  }
+
   function abrirGraficaCapital() {
     const modal = $("modalEvolucionCapital");
     const content = $("capitalChartContent");
@@ -2053,32 +2132,28 @@
 
     modal.classList.add("active");
     document.body.style.overflow = "hidden";
-    content.innerHTML = skeletonResumen();
     refreshIcons();
 
-    if (!isGASAvailable()) {
-      renderizarErrorGraficaCapital("No se pudo conectar con Google Apps Script");
-      return;
+    const cache = evolucionCache[sheetName];
+    if (cache && cache.data) {
+      // Render inmediato con el caché (no skeleton)
+      evolucionCapitalData = cache.data;
+      evolucionCapitalRango = "max";
+      renderizarGraficaCapital(cache.data);
+      // Si el caché está stale o el usuario abrió por primera vez hace >60s, refrescar
+      const antiguedadMs = Date.now() - (cache.ts || 0);
+      if (cache.stale || antiguedadMs > 60_000) {
+        prefetchEvolucionCapital(sheetName);
+      }
+    } else {
+      // Sin caché: mostrar skeleton y lanzar fetch
+      content.innerHTML = skeletonResumen();
+      if (!isGASAvailable()) {
+        renderizarErrorGraficaCapital("No se pudo conectar con Google Apps Script");
+        return;
+      }
+      prefetchEvolucionCapital(sheetName, true);
     }
-
-    google.script.run
-      .withSuccessHandler(function (resp) {
-        if (resp?.success) {
-          evolucionCapitalData = resp;
-          evolucionCapitalRango = "max";
-          renderizarGraficaCapital(resp);
-        } else {
-          renderizarErrorGraficaCapital(
-            extraerMensaje(resp, "No se pudo cargar la evolucion del capital"),
-          );
-        }
-      })
-      .withFailureHandler(function (error) {
-        renderizarErrorGraficaCapital(
-          extraerMensaje(error, "No se pudo cargar la evolucion del capital"),
-        );
-      })
-      .obtenerEvolucionCapitalUSDT(sheetName);
   }
 
   function cambiarRangoGraficaCapital(rango) {
@@ -2471,11 +2546,12 @@
         <div class="resumen-card resumen-month-card">
           <div class="month-interest-top">
             <h3> Intereses del ciclo</h3>
+            <span class="month-interest-tag">ciclos</span>
             <select
               id="interestMonthSelect"
               class="vista-capital-select month-interest-select"
               onchange="cambiarMesIntereses(this.value)"
-              title="Seleccionar mes"
+              title="Seleccionar ciclo"
             >
               ${options}
             </select>
@@ -3329,6 +3405,7 @@
           if (res && res.success) {
             showAlert("success", "Actualizado correctamente");
             cargarResumen(false, { force: true });
+            invalidarEvolucionCache(currentSheet);
           } else {
             showAlert("error", "Error al guardar");
           }
