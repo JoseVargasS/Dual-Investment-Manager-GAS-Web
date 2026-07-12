@@ -819,17 +819,19 @@
         let opOriginal = null;
         if (opIndex !== -1) {
           opOriginal = { ...operacionesData.activas[opIndex] };
-          // Aplicar cambios al objeto en memoria
+          const fechaFinCalculada = datos.fechaFin || opOriginal.fechaFin;
+          // Aplicar cambios al objeto en memoria + recalcular campos derivados
           operacionesData.activas[opIndex] = {
             ...opOriginal,
             fechaInicio: datos.fechaInicio,
-            fechaFin: datos.fechaFin || opOriginal.fechaFin,
+            fechaFin: fechaFinCalculada,
             cex: datos.cex,
             monto: datos.monto,
             moneda: datos.moneda,
             apr: datos.apr,
             tipoOperacion: datos.tipoOperacion,
             precioObjetivo: datos.precioObjetivo,
+            ...recalcularDerivados(datos.fechaInicio, fechaFinCalculada, datos.monto, datos.moneda, datos.apr, datos.precioObjetivo),
           };
           actualizarOperacionActiva(operacionesData.activas[opIndex]);
           showAlert("success", "Operación actualizada correctamente");
@@ -848,6 +850,8 @@
               showAlert("error", extraerMensaje(response, "Error al actualizar"));
             } else {
               invalidarEvolucionCache(sheetDestino);
+              // Refrescar con datos reales del sheet (fórmulas calculadas)
+              cargarOperaciones(true);
             }
           })
           .withFailureHandler(function (error) {
@@ -1294,6 +1298,67 @@
         </td>
       </tr>
     `;
+  }
+
+  // Recalcula campos derivados localmente (interés, total, tiempo, APR acum/efectivo)
+  function recalcularDerivados(fechaInicio, fechaFin, monto, moneda, apr, precioObjetivo) {
+    const montoNum = parseFloat(monto) || 0;
+    const aprNum = parseFloat(apr) || 0;
+    const precioNum = parseFloat(precioObjetivo) || 0;
+    const mon = moneda || "USDT";
+
+    // Calcular tiempo decimal en días
+    let tiempoDecimal = 0;
+    if (fechaInicio && fechaFin) {
+      const fInicio = new Date(fechaInicio.replace(" ", "T"));
+      const fFin = new Date(fechaFin.replace(" ", "T"));
+      if (!isNaN(fInicio.getTime()) && !isNaN(fFin.getTime()) && fFin > fInicio) {
+        tiempoDecimal = (fFin.getTime() - fInicio.getTime()) / (1000 * 60 * 60 * 24);
+      }
+    }
+
+    const daysInt = Math.floor(tiempoDecimal);
+    const hrsInt = Math.round((tiempoDecimal - daysInt) * 24);
+    let tStr = "";
+    if (daysInt > 0) tStr += daysInt + (daysInt === 1 ? " dia " : " dias ");
+    if (hrsInt > 0 || (daysInt === 0 && hrsInt === 0))
+      tStr += hrsInt + (hrsInt === 1 ? " hora" : " horas");
+
+    // Interés: USDT = monto * (APR/100) * tiempoDecimal / 365
+    //          ETH/BTC = monto * (APR/100) * tiempoDecimal * precioObjetivo / 365
+    const aprDecimal = aprNum / 100;
+    let interes = 0;
+    if (mon === "USDT") {
+      interes = montoNum * aprDecimal * tiempoDecimal / 365;
+    } else {
+      interes = montoNum * aprDecimal * tiempoDecimal * precioNum / 365;
+    }
+
+    // Total: USDT = monto + interés, ETH/BTC = monto * precio + interés
+    let total = 0;
+    if (mon === "USDT") {
+      total = montoNum + interes;
+    } else {
+      total = montoNum * precioNum + interes;
+    }
+
+    // APR efectivo diario = interés * 365 / monto (/ precio para crypto)
+    let aprEfectivo = 0;
+    if (interes > 0 && montoNum > 0) {
+      if (mon === "USDT") {
+        aprEfectivo = (interes * 365 / montoNum) * 100;
+      } else {
+        aprEfectivo = (interes * 365 / (montoNum * precioNum)) * 100;
+      }
+    }
+
+    return {
+      tiempoCex: tStr,
+      tiempoDias: tiempoDecimal,
+      interes: interes,
+      total: total,
+      aprEfectivo: aprEfectivo.toFixed(2),
+    };
   }
 
   function actualizarOperacionActiva(op) {
